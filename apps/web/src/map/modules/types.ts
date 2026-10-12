@@ -8,6 +8,7 @@ import type { LayerSpecification, Map as MlMap } from 'maplibre-gl';
 import type { Atlas } from '@brises/shared';
 import type { Grid } from '@brises/model';
 import type { AppState } from '../../state/store';
+import { sameSpot, SPOT_LABEL } from '../spots';
 
 /** Stacking slots, bottom to top. Modules insert their layers into a slot. */
 export const SLOTS = ['base', 'analysis', 'areas', 'lines', 'scene', 'points', 'labels'] as const;
@@ -44,6 +45,8 @@ export interface FeatureDetails {
   paragraphs?: string[];
   /** Global source ids (atlas) — resolved by the UI. */
   sourceIds?: string[];
+  /** Items at the same place that carry no icon of their own (one icon per place). */
+  related?: { ref: string; title: string; kind: string }[];
   /** Explicit links (external directories). */
   links?: { label: string; url: string }[];
   warning?: string;
@@ -66,6 +69,12 @@ export interface MapModule {
   /** Handles a click itself (e.g. picking a massif); returns true when it did. */
   select?(featureId: string, properties: Record<string, unknown>): boolean;
   dispose?(): void;
+}
+
+/** The items sharing a place with a sheet's item, as sheet links. */
+export function relatedOf(ref: string): FeatureDetails['related'] {
+  const list = sameSpot(ref);
+  return list.length ? list.map((s) => ({ ref: s.ref, title: s.name, kind: SPOT_LABEL[s.kind] })) : undefined;
 }
 
 export function bboxOf(coords: number[][]): [number, number, number, number] {

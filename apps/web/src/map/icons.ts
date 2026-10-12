@@ -58,31 +58,38 @@ const ICONS: Record<string, { size: number; draw: Draw }> = {
       c.fillText('A', s / 2, s / 2 + s * 0.02);
     },
   },
+  // Not official (cited by the sources, OSM, ParaglidingEarth): the same shapes, outlined instead of solid.
   'takeoff-community': {
     size: 40,
     draw: (c, s) => {
       c.beginPath();
-      c.moveTo(s * 0.5, s * 0.16);
+      c.moveTo(s * 0.5, s * 0.14);
       c.lineTo(s * 0.86, s * 0.8);
       c.lineTo(s * 0.14, s * 0.8);
       c.closePath();
-      c.fillStyle = 'rgba(134, 239, 172, 0.9)';
+      c.fillStyle = 'rgba(2, 6, 23, 0.78)';
       c.fill();
-      c.lineWidth = s * 0.06;
-      c.strokeStyle = '#14532d';
+      c.lineJoin = 'round';
+      c.lineWidth = s * 0.1;
+      c.strokeStyle = '#4ade80';
       c.stroke();
     },
   },
   'landing-community': {
-    size: 34,
+    size: 36,
     draw: (c, s) => {
       c.beginPath();
-      c.arc(s / 2, s / 2, s * 0.32, 0, Math.PI * 2);
-      c.fillStyle = 'rgba(147, 197, 253, 0.9)';
+      c.arc(s / 2, s / 2, s * 0.33, 0, Math.PI * 2);
+      c.fillStyle = 'rgba(2, 6, 23, 0.78)';
       c.fill();
-      c.lineWidth = s * 0.07;
-      c.strokeStyle = '#1e3a8a';
+      c.lineWidth = s * 0.1;
+      c.strokeStyle = '#60a5fa';
       c.stroke();
+      c.fillStyle = '#93c5fd';
+      c.font = `bold ${s * 0.36}px sans-serif`;
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText('A', s / 2, s / 2 + s * 0.02);
     },
   },
   hazard: {

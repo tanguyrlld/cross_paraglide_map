@@ -56,7 +56,11 @@ await shot('d01-massifs-map');
 
 await page.locator('.sidebar').getByRole('button', { name: /^Chartreuse/ }).first().click();
 await page.waitForTimeout(3000);
-await shot('d02-massif-tour');
+await shot('d02-massif-page');
+// The guided visit starts on request only.
+await page.getByRole('button', { name: 'Présente-moi ce massif' }).click();
+await page.waitForTimeout(2500);
+await shot('d02b-massif-tour');
 for (let i = 0; i < 5; i++) {
   await page.locator('.tour').getByRole('button', { name: 'Suivant' }).click();
   await page.waitForTimeout(1600);
@@ -80,12 +84,15 @@ await page.waitForTimeout(3500);
 await page.mouse.click(760, 470);
 await page.waitForTimeout(2500);
 await shot('d06-probe');
+await page.getByRole('button', { name: /Plus de détails/ }).click();
+await page.waitForTimeout(500);
+await shot('d06b-probe-details');
 await page.keyboard.press('Escape');
 
-await page.locator('.wind-chip').click();
+await page.locator('.wind-panel').getByRole('button', { name: /Plus de réglages/ }).click();
 await page.waitForTimeout(500);
 await shot('d07-conditions');
-await page.locator('.wind-chip').click();
+await page.locator('.wind-panel').getByRole('button', { name: /Plus de réglages/ }).click();
 await page.getByRole('button', { name: /Calques/ }).click();
 await page.waitForTimeout(500);
 await shot('d08-layers');
@@ -125,7 +132,9 @@ await phone.locator('.mobile-dock').getByRole('button', { name: /Massifs/ }).cli
 await phone.waitForTimeout(2500);
 await pshot('m02-massifs');
 await phone.locator('.sidebar').getByRole('button', { name: /^Chartreuse/ }).first().click();
-await phone.waitForTimeout(3500);
+await phone.waitForTimeout(2500);
+await phone.getByRole('button', { name: 'Présente-moi ce massif' }).click();
+await phone.waitForTimeout(3000);
 await pshot('m03-visit');
 // Drag the sheet down to its smallest height: the map gets the screen, the step stays readable.
 {

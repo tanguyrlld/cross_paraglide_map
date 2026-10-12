@@ -2062,21 +2062,6 @@ kbd {
   font-size: 10px;
 }
 
-.schema-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  margin: 6px 0 10px;
-  font-size: 11px;
-  color: var(--text-2);
-}
-
-.schema-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .sw-line {
   width: 18px;
   height: 4px;
@@ -2482,13 +2467,10 @@ kbd {
 
 /* ---------- Bottom chrome follows the open panels (desktop) ---------- */
 @media (min-width: 861px) {
+  /* The time bar spans the whole width; the left column stops above it. */
   .timebar,
   .legend {
     left: var(--gap);
-  }
-  .side-open .timebar,
-  .side-open .legend {
-    left: calc(var(--side-w) + var(--gap) * 2);
   }
   .timebar {
     right: var(--gap);
@@ -3031,18 +3013,15 @@ div.summary {
 }
 
 /* ---------- Basemap switch (on the map) and compact legend ---------- */
+/* Right of the map, under the layers button: the left side belongs to the column. */
 .basemap-switch {
   position: absolute;
-  left: var(--gap);
-  bottom: calc(var(--gap) * 2 + var(--timebar-h));
+  top: calc(var(--gap) + 66px + 44px);
+  right: var(--gap);
   z-index: 3;
   display: flex;
   gap: 4px;
   padding: 4px;
-}
-
-.side-open .basemap-switch {
-  left: calc(var(--side-w) + var(--gap) * 2);
 }
 
 .basemap-switch button {
@@ -3077,9 +3056,6 @@ div.summary {
 @media (min-width: 861px) {
   .legend {
     left: calc(var(--gap) + 140px);
-  }
-  .side-open .legend {
-    left: calc(var(--side-w) + var(--gap) * 2 + 140px);
   }
   .legend.closed {
     max-width: 120px;
@@ -3230,10 +3206,8 @@ div.summary {
 /* The time bar spans the free width (no permanent right panel). */
 @media (min-width: 861px) {
   .timebar {
+    left: var(--gap) !important;
     right: var(--gap) !important;
-  }
-  .side-open .timebar {
-    left: calc(var(--side-w) + var(--gap) * 2) !important;
   }
   .navpad {
     right: var(--gap) !important;
@@ -3928,4 +3902,310 @@ div.summary {
     min-height: 46px;
     font-size: 15px;
   }
+}
+
+
+/* ---------- Summary first, details on demand (probe, massif page) ---------- */
+.probe-more,
+.more-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+  color: var(--text-2);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.probe-more small,
+.more-btn small {
+  flex: 1;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.probe-more:hover,
+.more-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.probe-more.open .chev,
+.more-btn.open .chev {
+  transform: rotate(180deg);
+}
+
+.probe-details {
+  margin-top: 10px;
+}
+
+/* ---------- Left column (desktop): open content on top, wind settings at the foot ---------- */
+.left-col {
+  display: contents;
+}
+
+@media (min-width: 861px) {
+  .left-col {
+    position: absolute;
+    top: calc(var(--gap) + 64px);
+    bottom: calc(var(--gap) * 2 + var(--timebar-h));
+    left: var(--gap);
+    width: var(--side-w);
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+    pointer-events: none;
+  }
+  .left-col > * {
+    pointer-events: auto;
+  }
+  .left-col > .sidebar {
+    position: static;
+    width: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  /* The probe summary is short: the panel fits it and keeps it whole (the wind panel scrolls). */
+  .left-col > .sidebar.fit {
+    flex: 0 0 auto;
+  }
+  /* Short or long content, the wind panel stays at the foot of the column. */
+  .left-col > .wind-panel {
+    flex: 0 1 auto;
+    min-height: 46px;
+    margin-top: auto;
+  }
+  .left-col > .wind-panel:not(.open) {
+    flex: none;
+  }
+}
+
+/* ---------- Wind panel (narrow, at the foot of the left column) ---------- */
+:root {
+  --wind-w: 224px;
+}
+
+@media (min-width: 861px) {
+  .left-col > .wind-panel {
+    align-self: flex-start;
+    width: var(--wind-w);
+  }
+  /* Folded under an open sheet: the bar lines up with it. */
+  .left-col > .sidebar:not(.collapsed) ~ .wind-panel:not(.open) {
+    align-self: stretch;
+    width: auto;
+  }
+}
+
+.wind-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 12.5px;
+}
+
+.wind-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wind-panel-head svg:first-child {
+  color: var(--accent);
+  flex: none;
+}
+
+.wind-panel-head b {
+  flex: 1;
+}
+
+.wind-panel:not(.open) .wind-panel-head b {
+  flex: none;
+}
+
+.wind-panel-sum {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.wind-panel:not(.open) .chev {
+  transform: rotate(180deg);
+}
+
+.wind-panel.open .wind-panel-head {
+  border-bottom: 1px solid var(--border);
+}
+
+.wind-panel-body {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 10px 12px 10px;
+  scrollbar-width: thin;
+}
+
+.wind-panel-wind {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.wind-panel-wind .wind-dial {
+  width: 108px;
+  height: 108px;
+}
+
+.wind-panel-speed {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  color: var(--text-2);
+}
+
+.wind-panel-speed span {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.wind-panel-speed b {
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.wind-panel .chips {
+  margin-top: 8px;
+  gap: 4px;
+}
+
+.wind-panel .chip {
+  padding: 3px 8px;
+  font-size: 11.5px;
+}
+
+.wind-panel-title {
+  margin: 10px 0 5px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.wind-panel-overlays {
+  display: grid;
+  gap: 2px;
+}
+
+.wind-panel-overlays button {
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wind-panel-overlays button:hover {
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.wind-panel-overlays button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: #fff;
+}
+
+.wind-panel-overlay-opts .hint {
+  margin: 6px 0 4px;
+  font-size: 11.5px;
+}
+
+.wind-panel .link-btn {
+  margin-top: 8px;
+  font-size: 11.5px;
+}
+
+.more-btn {
+  margin: 14px 0 4px;
+}
+
+/* Massif diagram: the legend doubles as its switches. */
+.schema-layers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 10px 0 12px;
+}
+
+.schema-layers .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.schema-layers .chip.static {
+  cursor: default;
+}
+
+.schema-layers .chip.off {
+  opacity: 0.55;
+  background: transparent;
+}
+
+.schema-layers .chip.off i {
+  filter: grayscale(0.7);
+}
+
+.wind-panel .more {
+  margin-top: 8px;
+}
+
+.wind-panel .more .disclosure-body {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.wind-panel .height-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.wind-panel .toggle {
+  font-size: 12px;
+}
+
+.swatches.sym span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }

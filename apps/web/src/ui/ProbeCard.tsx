@@ -1,13 +1,14 @@
 import type { PointForecast } from '@brises/shared';
 import { compassFr, describeVector } from '@brises/model';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useApp, useRuntime } from '../state/store';
 import { getController, getDataClient } from './controller-ref';
 import { startDraft } from './Feedback';
 import { fmtHour } from './format';
+import type { ProbeResult } from '../map/modules/wind';
 import { NearbySources } from './Nearby';
 import { ProfileChart } from './ProfileChart';
-import { IconClose, IconPlus, IconSun } from './icons';
+import { IconChevron, IconClose, IconPlus, IconSun } from './icons';
 
 function Arrow({ v, size = 18 }: { v: [number, number]; size?: number }) {
   const d = describeVector(v);
@@ -138,6 +139,11 @@ function AirspacesHere({ lon, lat }: { lon: number; lat: number }) {
 export function ProbeSheet() {
   const probe = useRuntime((r) => r.probe);
   const { heightMode, heightAgl, heightAsl, synopticKmh } = useApp();
+  // At first sight only the wind and the slope; the breakdown and the sources on demand.
+  const more = useRuntime((r) => r.probeDetails);
+  const setMore = (v: boolean) => useRuntime.getState().set({ probeDetails: v });
+  // Each probed point opens folded (the sheet is keyed by the point).
+  useEffect(() => () => useRuntime.getState().set({ probeDetails: false }), []);
   if (!probe) return null;
   const c = probe.result;
   const close = () => getController()?.clearProbe();
@@ -172,16 +178,33 @@ export function ProbeSheet() {
       {c.underground ? (
         <p className="note">L’altitude choisie est sous le relief à cet endroit.</p>
       ) : (
-        <>
-          <div className="probe-total">
-            <Arrow v={c.total} size={40} />
-            <div>
-              <b>{total.speedKmh < 1 ? 'Calme' : `${total.from} · ${Math.round(total.speedKmh)} km/h`}</b>
-              <small>
-                sol {Math.round(c.elevation)} m · pente {Math.round(c.slopeDeg)}°{c.slopeDeg > 4 ? ` face ${compassFr(c.aspectDeg)}` : ''} · soleil {Math.round(c.insolation * 100)} %
-              </small>
-            </div>
+        <div className="probe-total">
+          <Arrow v={c.total} size={40} />
+          <div>
+            <b>{total.speedKmh < 1 ? 'Calme' : `${total.from} · ${Math.round(total.speedKmh)} km/h`}</b>
+            <small>
+              sol {Math.round(c.elevation)} m · pente {Math.round(c.slopeDeg)}°{c.slopeDeg > 4 ? ` face ${compassFr(c.aspectDeg)}` : ''} · soleil {Math.round(c.insolation * 100)} %
+            </small>
           </div>
+        </div>
+      )}
+      <button className={`probe-more ${more ? 'open' : ''}`} onClick={() => setMore(!more)} aria-expanded={more}>
+        {more ? 'Moins de détails' : 'Plus de détails'}
+        <small>brises, thermique, sources, prévision</small>
+        <IconChevron size={14} className="chev" />
+      </button>
+      {more && (
+        <ProbeDetails c={c} exposure={exposure} conv={conv} lon={probe.lon} lat={probe.lat} />
+      )}
+    </div>
+  );
+}
+
+function ProbeDetails({ c, exposure, conv, lon, lat }: { c: ProbeResult; exposure: { tone: string; text: string }; conv: number; lon: number; lat: number }) {
+  return (
+    <div className="probe-details">
+      {!c.underground && (
+        <>
           <div className="probe-rows">
             <Row label="Brise de pente" v={c.slope} />
             <Row label="Brise de vallée (relief)" v={c.valley} note={c.curatedWeight > 0.5 ? 'remplacée par la brise documentée' : undefined} />
@@ -209,10 +232,10 @@ export function ProbeSheet() {
           </div>
         </>
       )}
-      <AirspacesHere lon={probe.lon} lat={probe.lat} />
-      <NearbySources lon={probe.lon} lat={probe.lat} />
-      <PointForecastBlock lon={probe.lon} lat={probe.lat} />
-      <button className="link-btn add-here" onClick={() => startDraft({ kind: 'new', points: [[probe.lon, probe.lat]] })}>
+      <AirspacesHere lon={lon} lat={lat} />
+      <NearbySources lon={lon} lat={lat} />
+      <PointForecastBlock lon={lon} lat={lat} />
+      <button className="link-btn add-here" onClick={() => startDraft({ kind: 'new', points: [[lon, lat]] })}>
         <IconPlus size={14} /> Signaler un phénomène ici
       </button>
     </div>

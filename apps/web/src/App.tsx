@@ -13,6 +13,7 @@ import { Sidebar } from './ui/Sidebar';
 import { TimeBar } from './ui/TimeBar';
 import { MassifTour } from './ui/Tour';
 import { Welcome } from './ui/Welcome';
+import { WindPanel } from './ui/WindPanel';
 import { useApp, useRuntime } from './state/store';
 
 function StatusPill() {
@@ -111,7 +112,11 @@ export default function App() {
           <IconHelp />
         </button>
       </header>
-      <Sidebar />
+      {/* Desktop: one left column, the open content above, the wind settings at its foot. */}
+      <div className="left-col">
+        <Sidebar />
+        <WindPanel />
+      </div>
       <TimeBar />
       <MapTools />
       {!mobile && <BasemapSwitch />}

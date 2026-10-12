@@ -9,7 +9,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../state/store';
 import { getController } from './controller-ref';
-import { useIsMobile } from './mobile';
 
 type Action = 'fwd' | 'back' | 'left' | 'right' | 'rotL' | 'rotR' | 'tiltUp' | 'tiltDown' | 'in' | 'out';
 
@@ -125,8 +124,8 @@ const Arrow = ({ r }: { r: number }) => (
 export function NavPad() {
   const motion = useMotion();
   const touring = useApp((s) => s.tourStep !== null);
-  const mobile = useIsMobile();
-  const [open, setOpen] = useState(!mobile);
+  // Folded by default: the mouse, the touch screen and the keyboard already move the camera.
+  const [open, setOpen] = useState(false);
   const [help, setHelp] = useState(false);
 
   // Keyboard: continuous while the key is held; ignored while typing.

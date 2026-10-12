@@ -7,9 +7,10 @@ import { getController, getDataClient } from './controller-ref';
 import { fmtHour, MONTHS } from './format';
 import { IconChevron, IconDownload, IconMountain, IconSpark, IconWind } from './icons';
 import { LegendBody } from './Legend';
+import { useIsMobile } from './mobile';
 import { WindDial } from './WindDial';
 
-const PRESETS: { label: string; from: number; kmh: number; hint: string }[] = [
+export const PRESETS: { label: string; from: number; kmh: number; hint: string }[] = [
   { label: 'Calme', from: 315, kmh: 0, hint: 'Brises thermiques pures' },
   { label: 'NO faible', from: 315, kmh: 12, hint: 'Régime classique de beau temps' },
   { label: 'Bise', from: 45, kmh: 25, hint: 'Nord-est sec' },
@@ -21,7 +22,7 @@ const PRESETS: { label: string; from: number; kmh: number; hint: string }[] = [
   { label: 'Lombarde', from: 80, kmh: 30, hint: 'Flux d’est depuis l’Italie' },
 ];
 
-const OVERLAYS: { key: OverlayMode; label: string; hint: string }[] = [
+export const OVERLAYS: { key: OverlayMode; label: string; hint: string }[] = [
   { key: 'none', label: 'Aucune', hint: '' },
   { key: 'exposure', label: 'Au vent / sous le vent', hint: 'Vert : l’air monte sur le relief · rouge : abri, rotors · orange : venturi' },
   { key: 'thermal', label: 'Potentiel thermique', hint: 'Soleil sur la pente, altitude, reliefs saillants' },
@@ -143,7 +144,7 @@ function Tile({ tile }: { tile: TileDef }) {
   );
 }
 
-function Disclosure({ label, children }: { label: string; children: React.ReactNode }) {
+export function Disclosure({ label, children }: { label: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <div className={`disclosure ${open ? 'open' : ''}`}>
@@ -202,8 +203,8 @@ function Situation() {
   );
 }
 
-/** Conditions: synoptic wind, heatwave option, reading height (opened from the time bar). */
-export function ConditionsPanel() {
+/** Thermal breeze strength, heatwave day, and the forecast wind at the centre of the view. */
+export function WindExtras() {
   const s = useApp();
   const [forecastMsg, setForecastMsg] = useState<string | null>(null);
 
@@ -228,6 +229,62 @@ export function ConditionsPanel() {
   };
 
   return (
+    <>
+      <label className="field">
+        <span>
+          Brises thermiques <b>×{s.breezeScale.toFixed(1)}</b>
+        </span>
+        <input type="range" min={0} max={2} step={0.1} value={s.breezeScale} onChange={(e) => s.set({ breezeScale: Number(e.target.value) })} />
+      </label>
+      <label className="toggle">
+        <input type="checkbox" checked={s.heatwave} onChange={() => s.set({ heatwave: !s.heatwave })} />
+        <span className="switch" aria-hidden />
+        <span>Journée de canicule (brises « par forte chaleur »)</span>
+      </label>
+      <button className="link-btn" onClick={() => void loadForecast()}>
+        <IconDownload size={14} /> Prendre le vent prévu au centre de la carte
+      </button>
+      {forecastMsg && <p className="hint">{forecastMsg}</p>}
+    </>
+  );
+}
+
+/** Height at which the wind is read (above the ground or above sea level). */
+export function HeightSetting() {
+  const s = useApp();
+  return (
+    <div className="height-row">
+      <div className="seg small" role="radiogroup" aria-label="Référence de hauteur">
+        <button className={s.heightMode === 'agl' ? 'on' : ''} onClick={() => s.set({ heightMode: 'agl' })} role="radio" aria-checked={s.heightMode === 'agl'}>
+          Sol
+        </button>
+        <button className={s.heightMode === 'asl' ? 'on' : ''} onClick={() => s.set({ heightMode: 'asl' })} role="radio" aria-checked={s.heightMode === 'asl'}>
+          Altitude
+        </button>
+      </div>
+      {s.heightMode === 'agl' ? (
+        <label className="field grow">
+          <span>
+            <b>{s.heightAgl} m</b> au-dessus du sol
+          </span>
+          <input type="range" min={20} max={1500} step={10} value={s.heightAgl} onChange={(e) => s.set({ heightAgl: Number(e.target.value) })} />
+        </label>
+      ) : (
+        <label className="field grow">
+          <span>
+            <b>{s.heightAsl} m</b> d’altitude
+          </span>
+          <input type="range" min={500} max={4500} step={50} value={s.heightAsl} onChange={(e) => s.set({ heightAsl: Number(e.target.value) })} />
+        </label>
+      )}
+    </div>
+  );
+}
+
+/** Conditions on phones (opened from the time bar): synoptic wind, its extras, reading height. */
+export function ConditionsPanel() {
+  const s = useApp();
+  return (
     <div className="cp conditions">
       <Situation />
       <section className="cp-block">
@@ -251,23 +308,9 @@ export function ConditionsPanel() {
                 </span>
                 <input type="range" min={0} max={60} step={1} value={s.synopticKmh} onChange={(e) => s.set({ synopticKmh: Number(e.target.value) })} />
               </label>
-              <label className="field">
-                <span>
-                  Brises thermiques <b>×{s.breezeScale.toFixed(1)}</b>
-                </span>
-                <input type="range" min={0} max={2} step={0.1} value={s.breezeScale} onChange={(e) => s.set({ breezeScale: Number(e.target.value) })} />
-              </label>
             </div>
           </div>
-          <label className="toggle">
-            <input type="checkbox" checked={s.heatwave} onChange={() => s.set({ heatwave: !s.heatwave })} />
-            <span className="switch" aria-hidden />
-            <span>Journée de canicule (brises « par forte chaleur »)</span>
-          </label>
-          <button className="link-btn" onClick={() => void loadForecast()}>
-            <IconDownload size={14} /> Prendre le vent prévu au centre de la carte
-          </button>
-          {forecastMsg && <p className="hint">{forecastMsg}</p>}
+          <WindExtras />
         </Disclosure>
       </section>
 
@@ -275,33 +318,8 @@ export function ConditionsPanel() {
         <h3 className="cp-title">
           <IconMountain size={15} /> Hauteur de lecture
         </h3>
-        <div className="height-row">
-          <div className="seg small" role="radiogroup" aria-label="Référence de hauteur">
-            <button className={s.heightMode === 'agl' ? 'on' : ''} onClick={() => s.set({ heightMode: 'agl' })} role="radio" aria-checked={s.heightMode === 'agl'}>
-              Sol
-            </button>
-            <button className={s.heightMode === 'asl' ? 'on' : ''} onClick={() => s.set({ heightMode: 'asl' })} role="radio" aria-checked={s.heightMode === 'asl'}>
-              Altitude
-            </button>
-          </div>
-          {s.heightMode === 'agl' ? (
-            <label className="field grow">
-              <span>
-                <b>{s.heightAgl} m</b> au-dessus du sol
-              </span>
-              <input type="range" min={20} max={1500} step={10} value={s.heightAgl} onChange={(e) => s.set({ heightAgl: Number(e.target.value) })} />
-            </label>
-          ) : (
-            <label className="field grow">
-              <span>
-                <b>{s.heightAsl} m</b> d’altitude
-              </span>
-              <input type="range" min={500} max={4500} step={50} value={s.heightAsl} onChange={(e) => s.set({ heightAsl: Number(e.target.value) })} />
-            </label>
-          )}
-        </div>
+        <HeightSetting />
       </section>
-
     </div>
   );
 }
@@ -309,6 +327,8 @@ export function ConditionsPanel() {
 /** Layers: the four families, what the map means, and the rarer options. */
 export function LayersPanel() {
   const s = useApp();
+  // On a desktop the relief analysis sits in the wind tab (left of the map).
+  const mobile = useIsMobile();
   return (
     <div className="cp layers">
       <section className="cp-block">
@@ -324,25 +344,29 @@ export function LayersPanel() {
         <LegendBody />
       </section>
       <Section title="Plus d’options" icon={<IconSpark size={16} />} defaultOpen={false}>
-        <label className="field">
-          <span>Analyse sur le relief</span>
-          <select value={s.overlay} onChange={(e) => s.set({ overlay: e.target.value as OverlayMode })}>
-            {OVERLAYS.map((o) => (
-              <option key={o.key} value={o.key}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        {s.overlay !== 'none' && (
+        {mobile && (
           <>
-            <p className="hint">{OVERLAYS.find((o) => o.key === s.overlay)?.hint}</p>
             <label className="field">
-              <span>
-                Opacité <b>{Math.round(s.overlayOpacity * 100)} %</b>
-              </span>
-              <input type="range" min={0.2} max={1} step={0.05} value={s.overlayOpacity} onChange={(e) => s.set({ overlayOpacity: Number(e.target.value) })} />
+              <span>Analyse sur le relief</span>
+              <select value={s.overlay} onChange={(e) => s.set({ overlay: e.target.value as OverlayMode })}>
+                {OVERLAYS.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
             </label>
+            {s.overlay !== 'none' && (
+              <>
+                <p className="hint">{OVERLAYS.find((o) => o.key === s.overlay)?.hint}</p>
+                <label className="field">
+                  <span>
+                    Opacité <b>{Math.round(s.overlayOpacity * 100)} %</b>
+                  </span>
+                  <input type="range" min={0.2} max={1} step={0.05} value={s.overlayOpacity} onChange={(e) => s.set({ overlayOpacity: Number(e.target.value) })} />
+                </label>
+              </>
+            )}
           </>
         )}
         <h4 className="opt-title">Repères</h4>

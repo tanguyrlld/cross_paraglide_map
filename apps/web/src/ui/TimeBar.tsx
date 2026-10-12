@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useApp, useRuntime } from '../state/store';
 import { fmtHour, MONTHS } from './format';
 import { IconMoon, IconPause, IconPlay, IconSun } from './icons';
+import { useIsMobile } from './mobile';
 import { WindChip } from './Popovers';
 
 const MIN_H = 5;
@@ -11,6 +12,8 @@ const MAX_H = 22;
 export function TimeBar() {
   const { hour, month0, playing, set } = useApp();
   const sun = useRuntime((r) => r.sun);
+  // Desktop: the wind is set in the panel at the foot of the left column.
+  const mobile = useIsMobile();
 
   // GPU model: the field updates every frame, so the day can play smoothly.
   useEffect(() => {
@@ -82,7 +85,7 @@ export function TimeBar() {
           ))}
         </select>
       </label>
-      <WindChip />
+      {mobile && <WindChip />}
     </div>
   );
 }

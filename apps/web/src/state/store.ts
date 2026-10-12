@@ -15,6 +15,9 @@ export const SCHEMA_PHASES: { key: SchemaPhase; label: string; hours: [number, n
   { key: 'evening', label: 'Soir', hours: [18, 21.5] },
 ];
 
+/** What the massif diagram shows besides its breezes (always drawn). */
+export type SchemaLayerKey = 'thermals' | 'hazards' | 'takeoffs' | 'landings' | 'convergences' | 'routes';
+
 /** Panels shown as bottom sheets on phones (one at a time). */
 export type MobileSheet = 'none' | 'browse';
 
@@ -74,8 +77,10 @@ export interface AppState {
   schemaPicking: boolean;
   /** Schema drawn on the 3D relief instead of a flat map. */
   schema3d: boolean;
-  /** Simulated wind particles drawn under the schema (documented flows always are). */
+  /** Animated wind under the schema: particles, documented breeze flows, thermal columns. */
   schemaWind: boolean;
+  /** Families drawn on the massif diagram (a short default; the rest on demand, all during a visit). */
+  schemaLayers: Record<SchemaLayerKey, boolean>;
   /** Guided presentation of the schema massif: current step, null when off. */
   tourStep: number | null;
   /** Right-hand settings panel (desktop). */
@@ -91,6 +96,8 @@ export interface AppState {
   welcomeOpen: boolean;
   /** Left panel tab: sectors or cross-country routes. */
   browseTab: 'massifs' | 'routes';
+  /** Wind panel unfolded at the foot of the left column (desktop, remembered in this browser). */
+  windOpen: boolean;
   set: (patch: Partial<AppState>) => void;
   toggleLayer: (key: LayerKey) => void;
 }
@@ -139,10 +146,10 @@ export const useApp = create<AppState>((set) => ({
     comets: true,
     thermalColumns: true,
     breezes: true,
-    convergences: true,
+    convergences: false,
     hazards: true,
     thermals: true,
-    soaring: true,
+    soaring: false,
     takeoffs: true,
     landings: true,
     routes: false,
@@ -169,6 +176,7 @@ export const useApp = create<AppState>((set) => ({
   // Massif diagrams in relief by default (flat on demand).
   schema3d: true,
   schemaWind: false,
+  schemaLayers: { thermals: true, hazards: true, takeoffs: true, landings: false, convergences: false, routes: false },
   tourStep: null,
   panelOpen: !isSmall,
   popover: null,
@@ -178,6 +186,7 @@ export const useApp = create<AppState>((set) => ({
   level: remembered('brises.level', ['decouverte', 'pilote', 'expert'] as const, 'pilote'),
   welcomeOpen: remembered('brises.welcomed', ['1'] as const, null) === null,
   browseTab: 'massifs',
+  windOpen: remembered('brises.wind', ['folded'] as const, null) === null,
   set: (patch) => set(patch),
   toggleLayer: (key) => set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
 }));
@@ -204,6 +213,8 @@ export interface RuntimeState {
   sun: { azimuth: number; elevation: number } | null;
   solarHour: number | null;
   probe: { lon: number; lat: number; result: ProbeResult | null } | null;
+  /** The probe's breakdown, sources and forecast unfolded (the wind panel folds meanwhile). */
+  probeDetails: boolean;
   feature: FeatureDetails | null;
   draft: ContributionDraft | null;
   /** Route being planned or highlighted: turn points and whether map clicks add points. */
@@ -220,6 +231,7 @@ export const useRuntime = create<RuntimeState>((set) => ({
   sun: null,
   solarHour: null,
   probe: null,
+  probeDetails: false,
   feature: null,
   draft: null,
   plan: null,

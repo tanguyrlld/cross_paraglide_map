@@ -30,7 +30,7 @@ const SAINT_HILAIRE: [number, number] = [5.8866, 45.3103];
 const STEPS: TourStep[] = [
   {
     title: 'La carte vit selon l’heure',
-    text: 'Les traits colorés qui défilent sont les brises simulées à partir du relief et des récits de pilotes ; les spirales orange, les thermiques ; les bulles qui montent, leurs colonnes. Rien n’est figé : tout dépend de l’heure, du mois et du vent.',
+    text: 'Les traits colorés qui défilent sont les brises simulées à partir du relief et des récits de pilotes ; les bulles qui montent, les colonnes thermiques. Rien n’est figé : tout dépend de l’heure, du mois et du vent.',
     run: () => {
       goTo('carte');
       useApp.getState().set({ hour: 15, synopticKmh: 0, playing: false });
@@ -44,12 +44,13 @@ const STEPS: TourStep[] = [
   },
   {
     title: 'Le vent météo',
-    text: 'Par défaut l’air est calme : seules les brises jouent. Choisissez un régime (nord, sud, foehn…) pour voir comment il se combine au relief, ou appliquez la prévision du jour.',
-    target: '.wind-chip',
+    text: 'Par défaut l’air est calme : seules les brises jouent. En bas à gauche : tournez la boussole et réglez la force pour voir comment le vent se combine au relief ; l’analyse sur le relief colore les faces au vent, les thermiques ou les convergences.',
+    target: '.wind-panel',
+    mobileTarget: '.wind-chip',
   },
   {
     title: 'Touchez un endroit',
-    text: 'Exemple à Saint-Hilaire : le vent au sol et en altitude, le thermique et la convergence attendus, puis ce que disent les clubs, les fiches FFVL et les récits à moins de 3 km, avec leurs sources.',
+    text: 'Exemple à Saint-Hilaire : le vent à la hauteur choisie et la pente. « Plus de détails » ouvre le reste : brises, thermique, ce que disent les sources à moins de 3 km, prévision du jour.',
     target: '.sidebar',
     run: () => {
       goTo('carte');

@@ -67,17 +67,18 @@ function documentedStrength(p: AtlasFeatureProps): number {
 const LIVE_ONLY: (keyof AppState['layers'])[] = ['particles', 'comets', 'thermalColumns', 'breezes', 'convergences', 'hazards', 'thermals', 'soaring', 'takeoffs', 'landings', 'routes', 'kk7Thermals', 'kk7Skyways', 'sitesCommunity'];
 
 /** The state the map actually renders: the schema view flattens the relief and swaps the live layers for its diagram. */
-/** Documented breeze flows and thermal columns stay under the schema; particles only on demand. */
-const SCHEMA_KEEP: (keyof AppState['layers'])[] = ['comets', 'thermalColumns'];
+/** Animated under the schema only on demand (they redraw what the diagram already shows). */
+const SCHEMA_ANIMATED: (keyof AppState['layers'])[] = ['particles', 'comets', 'thermalColumns'];
 
 function effectiveState(s: AppState): AppState {
   // Picking a massif: only the sector names, so they read at a glance.
   if (s.schemaPicking && !s.schemaMassif)
     return { ...s, overlay: 'none', layers: { ...s.layers, ...Object.fromEntries([...LIVE_ONLY, 'labels', 'sitesOfficial', 'airspace', 'airspaceProtect', 'airspaceActivity'].map((k) => [k, false])) } };
   if (!s.schemaMassif) return s;
-  const off = LIVE_ONLY.filter((k) => !SCHEMA_KEEP.includes(k) && !(s.schemaWind && k === 'particles'));
+  const off = LIVE_ONLY.filter((k) => !(s.schemaWind && SCHEMA_ANIMATED.includes(k)));
   // The diagram writes its own title: the live map's sector names would overlap it.
-  return { ...s, exaggeration: s.schema3d ? s.exaggeration || 1.3 : 0, overlay: 'none', layers: { ...s.layers, ...Object.fromEntries([...off, 'labels', 'airspace', 'airspaceProtect', 'airspaceActivity'].map((k) => [k, false])) } };
+  // The diagram draws its own take-offs and landings: the official sites would double them.
+  return { ...s, exaggeration: s.schema3d ? s.exaggeration || 1.3 : 0, overlay: 'none', layers: { ...s.layers, ...Object.fromEntries([...off, 'labels', 'sitesOfficial', 'airspace', 'airspaceProtect', 'airspaceActivity'].map((k) => [k, false])) } };
 }
 
 export class MapController {
@@ -256,7 +257,9 @@ export class MapController {
     this.map.getCanvas().style.cursor = hit ? 'pointer' : '';
     const name = hit?.properties?.name as string | undefined;
     if (hit && name) {
-      this.hover.setLngLat(e.lngLat).setText(name).addTo(this.map);
+      // One icon per place: the hover names what else is there.
+      const also = hit.properties?.also as string | undefined;
+      this.hover.setLngLat(e.lngLat).setText(also ? `${name} (+ ${also})` : name).addTo(this.map);
     } else this.hover.remove();
   }
 

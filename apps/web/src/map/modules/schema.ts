@@ -7,11 +7,15 @@
  * The live 3D layers are switched off by the controller meanwhile.
  */
 import { isPhoneLayout, phonePadding } from '../viewport';
-import type { AtlasFeature, FeatureCategory } from '@brises/shared';
+import type { AtlasFeature, FeatureCategory, FlyingSite } from '@brises/shared';
 import type { ExpressionSpecification, FilterSpecification, GeoJSONSource, Map as MlMap } from 'maplibre-gl';
-import { SCHEMA_PHASES, type AppState, type SchemaPhase } from '../../state/store';
+import { SCHEMA_PHASES, type AppState, type SchemaLayerKey, type SchemaPhase } from '../../state/store';
 import { BREEZE_COLORS, COLORS } from '../palette';
+import { activeInSlot, endBearing, loadSchemaBreezes, schemaBreezeById, schemaBreezesFor } from '../schema-breezes';
+import { alsoText, DIAGRAM_RADIUS_KM, loadOfficialSites, officialAt, resolveSpots, setDiagramSpots, type Spot } from '../spots';
 import { shortLabel } from './knowledge';
+
+export { activeInSlot };
 import type { FeatureDetails, MapModule, ModuleContext } from './types';
 
 const LAYERS = [
@@ -24,7 +28,6 @@ const LAYERS = [
   'schema-conv',
   'schema-conv-point',
   'schema-points',
-  'schema-breeze-label',
   'schema-route-label',
   'schema-title',
   'schema-hl-line',
@@ -32,6 +35,8 @@ const LAYERS = [
 ] as const;
 /** The whole-Alps sector (large-scale breezes, convergences and routes). */
 const OVERVIEW = 'alpes-francaises';
+/** Below this zoom the live map turns into the sector map (massif shapes to choose from). */
+export const SECTOR_ZOOM = 8.3;
 
 const PICK_LAYERS = ['schema-pick-fill', 'schema-pick-line', 'schema-pick-dot', 'schema-pick-label'] as const;
 
@@ -44,12 +49,19 @@ export function thermalRole(text: string | undefined): string | null {
   return null;
 }
 
-/** Does an activity window [start, end) (hours, may wrap past midnight) overlap a slot? */
-export function activeInSlot(start: number | undefined, end: number | undefined, [a, b]: [number, number]): boolean {
-  if (start === undefined || end === undefined) return true;
-  if (start <= end) return start < b && end > a;
-  return a < end || b > start;
-}
+/** Diagram family of each category (breezes are always drawn). */
+const FAMILY: Partial<Record<FeatureCategory, SchemaLayerKey>> = {
+  thermals: 'thermals',
+  hazards: 'hazards',
+  takeoffs: 'takeoffs',
+  soaring: 'takeoffs',
+  landings: 'landings',
+  convergences: 'convergences',
+  routes: 'routes',
+};
+
+/** Families that share places on the diagram (one icon each place). */
+const SPOT_CATS: string[] = ['takeoffs', 'landings', 'soaring', 'hazards', 'thermals'];
 
 const POINT_ICONS: Partial<Record<FeatureCategory, string>> = {
   thermals: 'thermal',
@@ -89,6 +101,11 @@ export class SchemaModule implements MapModule {
   private zoomedOut = false;
   private touring = false;
   private threeD = false;
+  private layers: AppState['schemaLayers'] | null = null;
+  private officials: FlyingSite[] = [];
+  private phase: SchemaPhase = 'afternoon';
+  /** Items a guided-visit step talks about: drawn whatever the switches say. */
+  private forced = new Set<string>();
 
   constructor(
     private describeAtlas: (id: string) => FeatureDetails | null,
@@ -99,6 +116,10 @@ export class SchemaModule implements MapModule {
     this.ctx = ctx;
     const { map } = ctx;
     addArrowImage(map);
+    void Promise.all([loadSchemaBreezes(), loadOfficialSites()]).then(([, officials]) => {
+      this.officials = officials;
+      if (this.massif) this.render(this.massif, this.phase);
+    });
     const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
     map.addSource('schema', { type: 'geojson', data: empty });
     map.addSource('schema-veil', { type: 'geojson', data: empty });
@@ -151,16 +172,17 @@ export class SchemaModule implements MapModule {
         id: 'schema-breeze-arrows',
         type: 'symbol',
         source: 'schema',
-        filter: isCat('breezes') as FilterSpecification,
+        filter: isCat('breeze-head') as FilterSpecification,
         layout: {
-          'symbol-placement': 'line',
-          'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 8, 45, 12, 90],
           'icon-image': 'schema-arrow',
-          'icon-size': ['interpolate', ['linear'], ['zoom'], 8, 0.55, 12, 1],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 8, 0.9, 12, 1.5],
+          'icon-rotate': ['get', 'rotate'],
           'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
           'icon-rotation-alignment': 'map',
+          'icon-pitch-alignment': 'map',
         },
-        paint: { 'icon-color': '#0b1220', 'icon-halo-color': kindColor, 'icon-halo-width': 1.5, 'icon-opacity': own },
+        paint: { 'icon-color': kindColor, 'icon-halo-color': '#020617', 'icon-halo-width': 1.2, 'icon-opacity': own },
       },
       'lines',
     );
@@ -201,7 +223,7 @@ export class SchemaModule implements MapModule {
         id: 'schema-points',
         type: 'symbol',
         source: 'schema',
-        filter: ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'category'], 'convergences']],
+        filter: ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'category'], 'convergences'], ['!=', ['get', 'category'], 'breeze-head']],
         layout: {
           'icon-image': ['get', 'icon'],
           'icon-size': ['case', ['==', ['get', 'own'], true], 1, 0.7],
@@ -218,25 +240,6 @@ export class SchemaModule implements MapModule {
         paint: { 'text-color': '#f8fafc', 'text-halo-color': 'rgba(2,6,23,0.95)', 'text-halo-width': 1.6, 'icon-opacity': own },
       },
       'points',
-    );
-    ctx.addLayer(
-      {
-        id: 'schema-breeze-label',
-        type: 'symbol',
-        source: 'schema',
-        filter: ['all', isCat('breezes'), ['==', ['get', 'own'], true]],
-        layout: {
-          'symbol-placement': 'line-center',
-          'text-field': ['get', 'label'],
-          'text-font': ['Noto Sans Bold'],
-          'text-size': 12,
-          'text-offset': [0, -1.4],
-          'text-max-angle': 35,
-          'text-allow-overlap': false,
-        },
-        paint: { 'text-color': kindColor, 'text-halo-color': 'rgba(2,6,23,0.95)', 'text-halo-width': 1.5 },
-      },
-      'labels',
     );
     ctx.addLayer(
       {
@@ -370,7 +373,7 @@ export class SchemaModule implements MapModule {
     this.setPicking(false);
     // Zoomed out: the sector shapes come back (see refreshPick).
     const onZoom = () => {
-      const out = map.getZoom() < 8.3;
+      const out = map.getZoom() < SECTOR_ZOOM;
       if (out === this.zoomedOut) return;
       this.zoomedOut = out;
       this.refreshPick();
@@ -435,7 +438,10 @@ export class SchemaModule implements MapModule {
       map.easeTo({ pitch: s.schema3d ? 52 : 0, duration: 900 });
     }
     this.threeD = s.schema3d;
-    if (prev && prev.schemaMassif === s.schemaMassif && prev.schemaPhase === s.schemaPhase) return;
+    const layersChanged = !!prev && prev.schemaLayers !== s.schemaLayers;
+    this.layers = s.schemaLayers;
+    this.phase = s.schemaPhase;
+    if (prev && prev.schemaMassif === s.schemaMassif && prev.schemaPhase === s.schemaPhase && !layersChanged) return;
     if (!s.schemaMassif) {
       if (this.massif) this.exit();
       return;
@@ -466,6 +472,7 @@ export class SchemaModule implements MapModule {
   private exit(): void {
     const map = this.ctx!.map;
     this.massif = null;
+    setDiagramSpots(null);
     this.refreshPick();
     this.setVisible(false);
     if (this.savedCamera) map.easeTo({ ...this.savedCamera, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 1400 });
@@ -480,10 +487,6 @@ export class SchemaModule implements MapModule {
     // Context margin: neighbours within ~15 km are drawn faded to show the transitions.
     const pad = 0.15;
     const [w, s, e, n] = [m.bbox[0] - pad, m.bbox[1] - pad, m.bbox[2] + pad, m.bbox[3] + pad];
-    const inBox = (f: AtlasFeature) => {
-      const cs = f.geometry.type === 'Point' ? [f.geometry.coordinates] : f.geometry.coordinates;
-      return cs.some(([x, y]) => x >= w && x <= e && y >= s && y <= n);
-    };
     // The 3 routes most contained in the sector (classic local routes first).
     const [bw, bs, be, bn] = m.bbox;
     const share = (f: AtlasFeature) => {
@@ -498,25 +501,41 @@ export class SchemaModule implements MapModule {
         .map((f) => f.properties.id),
     );
     const out: GeoJSON.Feature[] = [];
+    const forced = this.forced;
+    const boxed = (cs: [number, number][]) => cs.some(([x, y]) => x >= w && x <= e && y >= s && y <= n);
+    for (const b of schemaBreezesFor(atlas, massifId, slot, boxed, forced)) {
+      const p = b.properties;
+      const own = p.massif === massifId;
+      const cs = b.geometry.coordinates;
+      // One colour for the day's upslope flows, another for the down-slope drainage of the morning and evening.
+      const tone = p.kind === 'katabatic' || p.kind === 'downvalley' ? 'downvalley' : 'valley';
+      const common = { id: p.id, atlasId: p.atlasId, kind: tone, name: p.name, speedKmh: p.speedKmh, confidence: p.confidence, own };
+      out.push({ type: 'Feature', geometry: b.geometry, properties: { ...common, category: 'breezes', label: shortLabel(p.name), origin: p.origin, mapLayer: p.mapLayer ?? null, sources: p.sources } });
+      // The head sits on the line's end, pointing the way the air goes (the image points east).
+      out.push({ type: 'Feature', geometry: { type: 'Point', coordinates: cs[cs.length - 1] }, properties: { ...common, category: 'breeze-head', rotate: endBearing(cs) - 90 } });
+    }
     for (const cat of Object.keys(atlas.features) as FeatureCategory[]) {
-      for (const f of atlas.features[cat]) {
+      if (cat === 'breezes') continue;
+      const family = FAMILY[cat];
+      const familyOn = !family || !this.layers || this.layers[family];
+      const shown = atlas.features[cat].filter((f) => {
+        const p = f.properties;
+        if (forced.has(p.id)) return true;
+        if (!familyOn) return false;
+        const own = p.massif === massifId;
+        // A sector shows its own items (its neighbours' breezes only, faded, above).
+        if (!own) return false;
+        // Hotspots known only from GPS tracks stay on the live map: the diagram teaches documented phenomena.
+        if (p.origin === 'kk7') return false;
+        // Routes: only the sector's own classic routes, not every cross passing by.
+        if (cat === 'routes' && massifId !== OVERVIEW && !localRoutes.has(p.id)) return false;
+        return true;
+      });
+      for (const f of shown) {
         const p = f.properties;
         const own = p.massif === massifId;
-        // The whole-Alps overview shows only its own large-scale items; a sector shows its neighbours' edges.
-        if (!own && (massifId === OVERVIEW || !inBox(f))) continue;
-        // Hotspots known only from GPS tracks stay on the live map: the diagram teaches documented phenomena.
-        if (p.origin === 'kk7') continue;
-        if (cat === 'breezes' && !activeInSlot(p.windowStart, p.windowEnd, slot)) continue;
-        // Routes: only the sector's own classic routes, not every cross passing by.
-        if (cat === 'routes' && massifId !== OVERVIEW && !localRoutes.has(p.id)) continue;
-        let label = shortLabel(p.name);
-        if (cat === 'breezes') label = `${shortLabel(p.name)} · ${p.speedKmh ?? '?'} km/h`;
-        else if (cat === 'thermals') {
-          const role = thermalRole(p.description);
-          label = [shortLabel(p.name), role && `${role === 'plafond' ? '▲' : role === 'relance' ? '↻' : '◆'} ${role}`, p.details?.Heures].filter(Boolean).join(' · ');
-        }
-        else if (cat === 'takeoffs' && p.details?.Orientation) label = `${shortLabel(p.name)} · ${p.details.Orientation}`;
-        else if (cat === 'routes' && p.details?.Distance) label = `${shortLabel(p.name)} · ${p.details.Distance}`;
+        // Just the name on the map: the rest on hover and in the item's sheet.
+        const label = shortLabel(p.name);
         out.push({
           type: 'Feature',
           geometry: f.geometry,
@@ -534,6 +553,32 @@ export class SchemaModule implements MapModule {
           },
         });
       }
+    }
+    // One icon per place (map/spots.ts); what a visit step points at keeps its own.
+    const spotOf = (f: GeoJSON.Feature): Spot | null => {
+      const p = f.properties!;
+      if (f.geometry.type !== 'Point' || !SPOT_CATS.includes(p.category)) return null;
+      const [lon, lat] = f.geometry.coordinates;
+      return { ref: `atlas:${p.id}`, kind: p.category, lon, lat, name: p.name };
+    };
+    const spots = out.map(spotOf).filter((x): x is Spot => !!x);
+    const r = resolveSpots(spots, new Set([...forced].map((id) => `atlas:${id}`)), DIAGRAM_RADIUS_KM);
+    setDiagramSpots(r);
+    for (let i = out.length - 1; i >= 0; i--) {
+      const sp = spotOf(out[i]);
+      if (!sp) continue;
+      if (r.hidden.has(sp.ref)) {
+        out.splice(i, 1);
+        continue;
+      }
+      const p = out[i].properties!;
+      p.also = alsoText(r.also.get(sp.ref));
+      // Solid for an official FFVL site, outlined otherwise; hazards named on hover only.
+      if (sp.kind === 'takeoffs' || sp.kind === 'landings') {
+        const kind = sp.kind === 'takeoffs' ? 'takeoff' : 'landing';
+        p.icon = officialAt(this.officials, kind, sp.lon, sp.lat) ? kind : `${kind}-community`;
+      }
+      if (sp.kind === 'hazards') p.label = '';
     }
     out.push({ type: 'Feature', geometry: { type: 'Point', coordinates: m.center }, properties: { category: 'title', label: m.shortName.toUpperCase(), own: true } });
     (map.getSource('schema') as GeoJSONSource).setData({ type: 'FeatureCollection', features: out });
@@ -562,9 +607,16 @@ export class SchemaModule implements MapModule {
   highlight(ids: string[]): void {
     const map = this.ctx?.map;
     if (!map || !map.getLayer('schema-hl-line')) return;
+    // What the step talks about must be on the diagram, even if its family is switched off.
+    const forced = new Set(ids);
+    if ([...forced].some((id) => !this.forced.has(id)) || [...this.forced].some((id) => !forced.has(id))) {
+      this.forced = forced;
+      if (this.massif) this.render(this.massif, this.phase);
+    }
     const list = ['literal', ids];
-    map.setFilter('schema-hl-line', ['in', ['get', 'id'], list] as unknown as FilterSpecification);
-    map.setFilter('schema-hl-point', ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'id'], list]] as unknown as FilterSpecification);
+    const key = ['coalesce', ['get', 'atlasId'], ['get', 'id']];
+    map.setFilter('schema-hl-line', ['all', ['!=', ['geometry-type'], 'Point'], ['in', key, list]] as unknown as FilterSpecification);
+    map.setFilter('schema-hl-point', ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'category'], 'breeze-head'], ['in', key, list]] as unknown as FilterSpecification);
     const dimmed: [string, string][] = [
       ['schema-breeze', 'line-opacity'],
       ['schema-breeze-arrows', 'icon-opacity'],
@@ -572,18 +624,35 @@ export class SchemaModule implements MapModule {
       ['schema-routes', 'line-opacity'],
       ['schema-points', 'icon-opacity'],
       ['schema-points', 'text-opacity'],
-      ['schema-breeze-label', 'text-opacity'],
     ];
     for (const [layer, prop] of dimmed) {
       const key = `${layer}|${prop}`;
       if (!this.baseOpacity.has(key)) this.baseOpacity.set(key, map.getPaintProperty(layer, prop as never) ?? 1);
       const base = this.baseOpacity.get(key);
-      const value = ids.length ? ['case', ['in', ['get', 'id'], list], base, ['*', 0.28, base]] : base;
+      const value = ids.length ? ['case', ['in', key, list], base, ['*', 0.28, base]] : base;
       map.setPaintProperty(layer, prop as never, value as never);
     }
   }
 
-  describe(id: string): FeatureDetails | null {
-    return this.describeAtlas(id);
+  describe(id: string, given: Record<string, unknown> = {}): FeatureDetails | null {
+    if (!id.startsWith('carte:')) return this.describeAtlas(id);
+    const line = schemaBreezeById(id);
+    const props: Record<string, unknown> = { ...line?.properties, ...given };
+    if (props.atlasId) return this.describeAtlas(String(props.atlasId));
+    const cs = line?.geometry.coordinates ?? [];
+    const xs = cs.map((c) => c[0]);
+    const ys = cs.map((c) => c[1]);
+    return {
+      ref: `schema:${id}`,
+      category: 'breezes',
+      title: String(props.name ?? 'Brise'),
+      subtitle: 'Brise montante de la journée',
+      paragraphs: [
+        `Tracée sur la carte « Brises des Alpes » de Franck Largeault${props.mapLayer ? ` (couche ${props.mapLayer})` : ''}, compilation des cartes de vol libre des parcs naturels, de la carte de Julien Wirtz, de la carte suisse des brises et de récits de pilotes. Aucune autre source de l'atlas ne la décrit en détail.`,
+      ],
+      sourceIds: ['chablais_giffre_arve:S69'],
+      bbox: xs.length ? [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] : [5, 44, 7, 46],
+      massifId: this.massif ?? undefined,
+    };
   }
 }

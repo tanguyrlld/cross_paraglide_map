@@ -6,7 +6,8 @@
 import type { FlyingSite, SiteProvider } from '@brises/shared';
 import type { ExpressionSpecification } from 'maplibre-gl';
 import type { AppState } from '../../state/store';
-import { bboxOf, type FeatureDetails, type MapModule, type ModuleContext } from './types';
+import { liveSpots, onLiveSpots, RADIUS_KM } from '../spots';
+import { bboxOf, relatedOf, type FeatureDetails, type MapModule, type ModuleContext } from './types';
 
 const KIND_LABEL = { takeoff: 'Décollage', landing: 'Atterrissage', site: 'Site de vol' } as const;
 
@@ -58,6 +59,8 @@ export class SitesModule implements MapModule {
         'points',
       );
     map.on('moveend', () => this.schedule());
+    // The live map decides which item carries each place (map/spots.ts).
+    onLiveSpots(() => this.render());
     this.schedule();
   }
 
@@ -119,8 +122,12 @@ export class SitesModule implements MapModule {
     const src = map?.getSource('ext-sites') as { setData?: (d: GeoJSON.FeatureCollection) => void } | undefined;
     if (!src?.setData) return;
     const list = [...this.sites.entries()].filter(([, s]) => (s.status === 'official' ? this.showOfficial : this.showCommunity));
-    const officials = list.filter(([, s]) => s.status === 'official').map(([, s]) => s);
-    const near = (a: FlyingSite, b: FlyingSite) => Math.abs(a.lat - b.lat) < 0.0023 && Math.abs(a.lon - b.lon) < 0.0032;
+    // One icon per place: an official site that lost its place to another item, and any community entry
+    // where an item is already drawn, carry no icon.
+    const live = liveSpots();
+    const shown = live.spots.filter((x) => !live.hidden.has(x.ref));
+    const kx = 111.32 * Math.cos((45.3 * Math.PI) / 180);
+    const taken = (s: FlyingSite) => shown.some((x) => Math.hypot((x.lon - s.lon) * kx, (x.lat - s.lat) * 110.57) < RADIUS_KM);
     src.setData({
       type: 'FeatureCollection',
       features: list.map(([key, s]) => ({
@@ -132,7 +139,7 @@ export class SitesModule implements MapModule {
           status: s.status ?? 'community',
           name: s.name,
           ...(s.orientations?.length ? { orient: s.orientations.join(' ') } : {}),
-          dup: s.status !== 'official' && officials.some((o) => o.kind === s.kind && near(o, s)),
+          dup: s.status === 'official' ? live.hidden.has(`${this.id}:${key}`) : taken(s),
         },
       })),
     });
@@ -165,6 +172,7 @@ export class SitesModule implements MapModule {
             ? `Attention : ${s.details!['Praticabilité']}. Consultez la fiche FFVL.`
             : 'Extrait de la fiche FFVL : consultez la fiche complète et les consignes locales avant de voler.',
       attribution: provider?.attribution,
+      related: relatedOf(`${this.id}:${id}`),
       bbox: bboxOf([[s.lon, s.lat]]),
     };
   }

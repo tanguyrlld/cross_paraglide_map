@@ -4,6 +4,9 @@
  * massif labels.
  */
 import { isPhoneLayout } from '../viewport';
+import type { FlyingSite } from '@brises/shared';
+import type { GeoJSONSource } from 'maplibre-gl';
+import { alsoText, loadOfficialSites, officialAt, resolveSpots, setLiveSpots, type Spot } from '../spots';
 import type { ExpressionSpecification, SymbolLayerSpecification } from 'maplibre-gl';
 import type { AtlasFeature, FeatureCategory } from '@brises/shared';
 import { windowActivity } from '@brises/model';
@@ -11,7 +14,7 @@ import type { AppState, LayerKey } from '../../state/store';
 import { CATEGORY_LABELS, CONFIDENCE_LABELS, KIND_LABELS } from '@brises/shared';
 import { EXPLAIN } from '../../glossary';
 import { BREEZE_COLORS, COLORS } from '../palette';
-import { bboxOf, type FeatureDetails, type MapModule, type ModuleContext } from './types';
+import { bboxOf, relatedOf, type FeatureDetails, type MapModule, type ModuleContext } from './types';
 
 const GROUPS: Partial<Record<LayerKey, string[]>> = {
   breezes: ['breezes-glow', 'breezes-core', 'breezes-core-low', 'breezes-arrows', 'breezes-hit', 'breezes-label'],
@@ -25,6 +28,11 @@ const GROUPS: Partial<Record<LayerKey, string[]>> = {
   labels: ['massif-labels'],
 };
 
+const POINT_CATS = ['takeoffs', 'landings', 'soaring', 'hazards', 'thermals'] as const;
+type PointCat = (typeof POINT_CATS)[number];
+/** Layer switches that change which item carries a place. */
+const SPOT_LAYERS = [...POINT_CATS, 'sitesOfficial'] as const;
+
 /** Short map label: no parenthetical, cut at a dash or comma, at most ~30 characters. */
 export function shortLabel(name: string): string {
   let t = name.replace(/\s*\([^)]*\)/g, '').trim();
@@ -37,6 +45,10 @@ export class KnowledgeModule implements MapModule {
   readonly clickableLayers = ['breezes-hit', 'convergences-line', 'convergences-point', 'hazards', 'thermals', 'thermals-measured', 'soaring', 'takeoffs', 'landings', 'routes-line'];
   private ctx: ModuleContext | null = null;
   private index = new Map<string, AtlasFeature>();
+  /** Point features as first added (labelled), re-sent with their icon decisions. */
+  private points = new Map<PointCat, GeoJSON.Feature[]>();
+  private officials: FlyingSite[] = [];
+  private shown: AppState['layers'] | null = null;
 
   add(ctx: ModuleContext): void {
     this.ctx = ctx;
@@ -45,8 +57,13 @@ export class KnowledgeModule implements MapModule {
     for (const cat of Object.keys(atlas.features) as FeatureCategory[]) {
       // Map labels use a short name; the full one stays in the sheet.
       const features = atlas.features[cat].map((f) => ({ ...f, properties: { ...f.properties, label: shortLabel(f.properties.name) } }));
+      if ((POINT_CATS as readonly string[]).includes(cat)) this.points.set(cat as PointCat, features as GeoJSON.Feature[]);
       map.addSource(cat, { type: 'geojson', data: { type: 'FeatureCollection', features } as GeoJSON.FeatureCollection });
     }
+    void loadOfficialSites().then((list) => {
+      this.officials = list;
+      if (this.shown) this.resolve(this.shown);
+    });
     map.addSource('massif-labels', {
       type: 'geojson',
       data: {
@@ -167,13 +184,16 @@ export class KnowledgeModule implements MapModule {
 
     // A phone shows the same zoom on a screen four times smaller: points come in a little later there.
     const later = isPhoneLayout() ? 0.8 : 0;
-    const point = (id: FeatureCategory, icon: string, minzoom: number, extra: Partial<NonNullable<SymbolLayerSpecification['layout']>> = {}) =>
+    // Only the item that carries its place gets an icon (see map/spots.ts).
+    const shownHere = ['!', ['to-boolean', ['get', 'hidden']]] as ExpressionSpecification;
+    const point = (id: FeatureCategory, icon: string | ExpressionSpecification, minzoom: number, extra: Partial<NonNullable<SymbolLayerSpecification['layout']>> = {}) =>
       ctx.addLayer(
         {
           id,
           type: 'symbol',
           source: id,
           minzoom: minzoom + later,
+          filter: shownHere,
           layout: {
             'icon-image': icon,
             'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.55, 12, 0.95],
@@ -192,25 +212,27 @@ export class KnowledgeModule implements MapModule {
         'points',
       );
     // Hundreds of items: they appear as one zooms in, so the overview stays readable.
-    point('landings', 'landing', 10);
+    const officialIcon = (kind: string) => ['case', ['to-boolean', ['get', 'official']], kind, `${kind}-community`] as ExpressionSpecification;
+    point('landings', officialIcon('landing'), 10);
     point('soaring', 'soaring', 9.5);
     point('thermals', 'thermal', 9);
     // Hotspots known only from GPS tracks (kk7): smaller, unlabelled, from closer in.
-    ctx.map.setFilter('thermals', ['!=', ['get', 'origin'], 'kk7']);
+    ctx.map.setFilter('thermals', ['all', ['!=', ['get', 'origin'], 'kk7'], shownHere]);
     ctx.addLayer(
       {
         id: 'thermals-measured',
         type: 'symbol',
         source: 'thermals',
         minzoom: 10.5 + later,
-        filter: ['==', ['get', 'origin'], 'kk7'],
+        filter: ['all', ['==', ['get', 'origin'], 'kk7'], shownHere],
         layout: { 'icon-image': 'thermal', 'icon-size': ['interpolate', ['linear'], ['zoom'], 10.5, 0.42, 13, 0.7], 'icon-allow-overlap': true, 'symbol-sort-key': ['-', 1, ['get', 'kk7P']] },
         paint: { 'icon-opacity': 0.72 },
       },
       'points',
     );
-    point('takeoffs', 'takeoff', 9.5);
-    point('hazards', 'hazard', 10);
+    point('takeoffs', officialIcon('takeoff'), 9.5);
+    // Hazards: the icon only, the name on hover.
+    point('hazards', 'hazard', 10, { 'text-field': '' });
 
     ctx.addLayer(
       {
@@ -268,6 +290,38 @@ export class KnowledgeModule implements MapModule {
       for (const [key, ids] of Object.entries(GROUPS) as [LayerKey, string[]][])
         if (!prev || prev.layers[key] !== s.layers[key]) for (const id of ids) map.setLayoutProperty(id, 'visibility', s.layers[key] ? 'visible' : 'none');
     if (!prev || prev.hour !== s.hour) this.updateActivity(s.hour);
+    if (!prev || SPOT_LAYERS.some((k) => prev.layers[k] !== s.layers[k])) this.resolve(s.layers);
+  }
+
+  /** One icon per place among the shown families (and the official sites when shown). */
+  private resolve(layers: AppState['layers']): void {
+    this.shown = layers;
+    const map = this.ctx?.map;
+    if (!map) return;
+    const spots: Spot[] = [];
+    for (const [cat, features] of this.points) {
+      if (!layers[cat]) continue;
+      for (const f of features) {
+        const p = f.properties as AtlasFeature['properties'];
+        if (f.geometry.type !== 'Point') continue;
+        const [lon, lat] = f.geometry.coordinates;
+        spots.push({ ref: `atlas:${p.id}`, kind: cat === 'thermals' && p.origin === 'kk7' ? 'measured' : cat, lon, lat, name: p.name });
+      }
+    }
+    if (layers.sitesOfficial)
+      for (const s of this.officials) spots.push({ ref: `sites:ffvl:${s.id}`, kind: s.kind === 'landing' ? 'ffvl-landing' : 'ffvl-takeoff', lon: s.lon, lat: s.lat, name: s.name });
+    const r = resolveSpots(spots);
+    setLiveSpots(r, spots);
+    for (const [cat, features] of this.points) {
+      const data = features.map((f) => {
+        const p = f.properties as AtlasFeature['properties'];
+        const ref = `atlas:${p.id}`;
+        const [lon, lat] = f.geometry.type === 'Point' ? f.geometry.coordinates : [0, 0];
+        const official = (cat === 'takeoffs' || cat === 'landings') && officialAt(this.officials, cat === 'takeoffs' ? 'takeoff' : 'landing', lon, lat);
+        return { ...f, properties: { ...f.properties, hidden: r.hidden.has(ref), also: alsoText(r.also.get(ref)), official } };
+      });
+      (map.getSource(cat) as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: data });
+    }
   }
 
   /** Breezes fade in and out with the hour, following their documented window. */
@@ -304,6 +358,7 @@ export class KnowledgeModule implements MapModule {
       details: p.details ? Object.entries(p.details) : undefined,
       paragraphs: p.description ? p.description.split('\n\n') : undefined,
       sourceIds: p.sources.split(',').filter(Boolean),
+      related: relatedOf(`atlas:${id}`),
       warning: p.coordQuality && p.coordQuality !== 'source' ? 'Position estimée à partir de descriptions : à vérifier sur la fiche FFVL avant usage.' : undefined,
       bbox: bboxOf(coords),
       massifId: p.massif,

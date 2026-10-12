@@ -11,11 +11,41 @@ const SPEED_STOPS: [string, string][] = [
   ['#f52e73', '50+'],
 ];
 
+/** The site and spot symbols, drawn like the map icons. */
+const Sym = {
+  takeoff: (solid: boolean) => (
+    <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden>
+      <path d="M10 3 L17.5 16 L2.5 16 Z" fill={solid ? '#16a34a' : 'rgba(2,6,23,0.8)'} stroke={solid ? '#fff' : '#4ade80'} strokeWidth={solid ? 1.4 : 2} strokeLinejoin="round" />
+    </svg>
+  ),
+  landing: (solid: boolean) => (
+    <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden>
+      <circle cx="10" cy="10" r="7" fill={solid ? '#2563eb' : 'rgba(2,6,23,0.8)'} stroke={solid ? '#fff' : '#60a5fa'} strokeWidth={solid ? 1.4 : 2} />
+      <text x="10" y="13.5" textAnchor="middle" fontSize="9" fontWeight="700" fill={solid ? '#fff' : '#93c5fd'}>
+        A
+      </text>
+    </svg>
+  ),
+};
+
 /** What the colours and lines of the map mean (shown in the Calques panel). */
 export function LegendBody() {
   const { overlay, particleColor, layers } = useApp();
+  const sites = layers.sitesOfficial || layers.takeoffs || layers.landings || layers.sitesCommunity;
   return (
     <div className="legend-body">
+      {sites && (
+        <div className="legend-block">
+          <h4>Sites de vol</h4>
+          <div className="swatches sym">
+            <span>{Sym.takeoff(true)} déco officiel FFVL</span>
+            <span>{Sym.takeoff(false)} déco non officiel</span>
+            <span>{Sym.landing(true)} atterro officiel FFVL</span>
+            <span>{Sym.landing(false)} atterro non officiel</span>
+          </div>
+          <p className="hint">Un seul symbole par lieu : le survol nomme le reste (piège, thermique…), la fiche le détaille.</p>
+        </div>
+      )}
       {layers.particles && (
         <div className="legend-block">
           <h4>{particleColor === 'speed' ? 'Vent simulé (km/h)' : 'Air montant / descendant'}</h4>
