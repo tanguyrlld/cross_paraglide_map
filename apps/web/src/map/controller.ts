@@ -257,9 +257,9 @@ export class MapController {
     this.map.getCanvas().style.cursor = hit ? 'pointer' : '';
     const name = hit?.properties?.name as string | undefined;
     if (hit && name) {
-      // One icon per place: the hover names what else is there.
-      const also = hit.properties?.also as string | undefined;
-      this.hover.setLngLat(e.lngLat).setText(also ? `${name} (+ ${also})` : name).addTo(this.map);
+      // A forbidden site says why under its name.
+      const note = hit.properties?.note as string | undefined;
+      this.hover.setLngLat(e.lngLat).setText(note ? `${name}\n${note}` : name).addTo(this.map);
     } else this.hover.remove();
   }
 

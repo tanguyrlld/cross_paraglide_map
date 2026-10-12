@@ -2,6 +2,7 @@ import type { Atlas, AtlasMassif, FeatureCategory } from '@brises/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { activeInSlot } from '../map/modules/schema';
 import { schemaBreezesFor, useSchemaBreezeFile } from '../map/schema-breezes';
+import { hazardDuplicates, isSoaring, usableConvergences } from '../map/spots';
 import type { FeatureDetails } from '../map/modules/types';
 import { BREEZE_COLORS, COLORS } from '../map/palette';
 import { SCHEMA_PHASES, useApp, useRuntime, type SchemaLayerKey } from '../state/store';
@@ -13,6 +14,7 @@ import { goTo, openMassif } from './modes';
 import { SheetHandle, useIsMobile } from './mobile';
 import { ProbeSheet } from './ProbeCard';
 import { RoutesBrowser } from './Routes';
+import { Sym } from './Legend';
 import { RichText, SourceList } from './Sources';
 
 /** Opens a massif: its page here and its schema on the map. */
@@ -87,7 +89,7 @@ function FeatureSheet({ f, atlas }: { f: FeatureDetails; atlas: Atlas }) {
       {f.warning && <p className="note">{f.warning}</p>}
       {f.related && (
         <section className="item-section">
-          <h3>Au même endroit</h3>
+          <h3>{f.category === 'Skyway' ? 'Itinéraires qui passent par ce skyway' : 'Au même endroit'}</h3>
           <ul className="items">
             {f.related.map((r) => (
               <li key={r.ref}>
@@ -204,27 +206,25 @@ function SchemaBlock({ title, children, count }: { title: string; children: Reac
   ) : null;
 }
 
-const SCHEMA_LAYERS: { key: SchemaLayerKey; label: string; color: string; shape: 'dot' | 'line' | 'dashed' | 'dotted' }[] = [
-  { key: 'thermals', label: 'Thermiques', color: COLORS.thermal, shape: 'dot' },
-  { key: 'hazards', label: 'Pièges', color: COLORS.hazard, shape: 'dot' },
-  { key: 'takeoffs', label: 'Décos', color: COLORS.takeoff, shape: 'dot' },
-  { key: 'landings', label: 'Attéros', color: COLORS.landing, shape: 'dot' },
-  { key: 'convergences', label: 'Convergences', color: COLORS.convergence, shape: 'dashed' },
-  { key: 'routes', label: 'Transitions', color: COLORS.route, shape: 'dotted' },
+const SCHEMA_LAYERS: { key: SchemaLayerKey; label: string; sym: React.ReactNode; hint?: string }[] = [
+  { key: 'breezes', label: 'Brises', sym: Sym.line(BREEZE_COLORS.valley), hint: 'Bleu : brises montantes de la journée · violet : brises descendantes du matin et du soir · épaisseur = force' },
+  { key: 'thermals', label: 'Thermiques', sym: Sym.thermal(14) },
+  { key: 'hazards', label: 'Pièges', sym: Sym.hazard(14) },
+  { key: 'takeoffs', label: 'Décos', sym: Sym.takeoff(true, 14), hint: 'Contour blanc : conventionné FFVL · sans contour : non conventionné ou hors liste FFVL · rouge barré : pratique interdite' },
+  { key: 'landings', label: 'Attéros', sym: Sym.landing(true, 14), hint: 'Plein : conventionné FFVL · contour : non conventionné ou hors liste FFVL · rouge barré : pratique interdite' },
+  { key: 'convergences', label: 'Convergences', sym: Sym.zone(COLORS.convergence), hint: 'Zones où les pilotes trouvent l’ascendance de la rencontre de deux brises' },
+  { key: 'routes', label: 'Transitions', sym: Sym.line(COLORS.route, true) },
 ];
 
-/** The diagram's legend, which is also its switchboard: the breezes always, the rest on demand. */
+/** The diagram's switches, each with the symbol it draws (the full legend is on the map). */
 function SchemaLayers() {
   const layers = useApp((s) => s.schemaLayers);
   const toggle = (k: SchemaLayerKey) => useApp.getState().set({ schemaLayers: { ...layers, [k]: !layers[k] } });
   return (
     <div className="schema-layers" role="group" aria-label="Sur le schéma">
-      <span className="chip static" title="Toujours affichées · bleu : brises montantes de la journée · violet : brises descendantes du matin et du soir · épaisseur = force · survolez une brise pour son nom">
-        <i className="sw-line" style={{ background: BREEZE_COLORS.valley }} /> Brises
-      </span>
       {SCHEMA_LAYERS.map((l) => (
-        <button key={l.key} className={`chip ${layers[l.key] ? 'active' : 'off'}`} aria-pressed={layers[l.key]} onClick={() => toggle(l.key)}>
-          <i className={l.shape === 'dot' ? 'sw-dot' : `sw-line ${l.shape}`} style={{ background: l.color }} /> {l.label}
+        <button key={l.key} className={`chip ${layers[l.key] ? 'active' : 'off'}`} aria-pressed={layers[l.key]} title={l.hint} onClick={() => toggle(l.key)}>
+          {l.sym} {l.label}
         </button>
       ))}
     </div>
@@ -247,7 +247,10 @@ function SchemaPanel({ m, atlas }: { m: AtlasMassif; atlas: Atlas }) {
     const near = atlas.features.breezes
       .filter((f) => f.properties.massif !== m.id && f.properties.massif !== 'alpes-francaises' && f.geometry.coordinates.some((c) => Array.isArray(c) && c[0] >= w - pad && c[0] <= e + pad && c[1] >= s - pad && c[1] <= n + pad))
       .map((f) => f.properties);
-    return { near, breezes: get('breezes'), convergences: get('convergences'), thermals: get('thermals'), hazards: get('hazards'), takeoffs: get('takeoffs'), landings: get('landings'), soaring: get('soaring'), routes };
+    const dups = hazardDuplicates(atlas);
+    const convs = usableConvergences(atlas);
+    const soaringIds = new Set(atlas.features.soaring.filter(isSoaring).map((f) => f.properties.id));
+    return { near, breezes: get('breezes'), convergences: get('convergences').filter((c) => convs.has(c.id)), thermals: get('thermals'), hazards: get('hazards').filter((h) => !dups.has(h.id)), takeoffs: get('takeoffs'), landings: get('landings'), soaring: get('soaring').filter((x) => soaringIds.has(x.id)), routes };
   }, [atlas, m]);
   // The same arrows as the diagram: one per valley, from the « Brises des Alpes » map where it draws the massif.
   useSchemaBreezeFile(); // re-renders once the map's breezes are in

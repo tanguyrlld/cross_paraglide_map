@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { BREEZE_COLORS, COLORS } from '../map/palette';
 import { useApp } from '../state/store';
-import { KIND_LABELS } from './format';
+import { IconChevron } from './icons';
+import { useIsMobile } from './mobile';
 
 const SPEED_STOPS: [string, string][] = [
   ['#d1edff', '0'],
@@ -11,41 +13,173 @@ const SPEED_STOPS: [string, string][] = [
   ['#f52e73', '50+'],
 ];
 
-/** The site and spot symbols, drawn like the map icons. */
-const Sym = {
-  takeoff: (solid: boolean) => (
-    <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden>
-      <path d="M10 3 L17.5 16 L2.5 16 Z" fill={solid ? '#16a34a' : 'rgba(2,6,23,0.8)'} stroke={solid ? '#fff' : '#4ade80'} strokeWidth={solid ? 1.4 : 2} strokeLinejoin="round" />
+/** The map symbols, drawn like the map icons (map/icons.ts). */
+export const Sym = {
+  takeoff: (solid: boolean, size = 16) => (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden>
+      <path d="M10 3 L17.5 16 L2.5 16 Z" fill="#16a34a" stroke={solid ? '#fff' : 'none'} strokeWidth="1.4" strokeLinejoin="round" />
     </svg>
   ),
-  landing: (solid: boolean) => (
-    <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden>
+  landing: (solid: boolean, size = 16) => (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden>
       <circle cx="10" cy="10" r="7" fill={solid ? '#2563eb' : 'rgba(2,6,23,0.8)'} stroke={solid ? '#fff' : '#60a5fa'} strokeWidth={solid ? 1.4 : 2} />
       <text x="10" y="13.5" textAnchor="middle" fontSize="9" fontWeight="700" fill={solid ? '#fff' : '#93c5fd'}>
         A
       </text>
     </svg>
   ),
+  forbidden: (shape: 'takeoff' | 'landing', size = 16) => (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden>
+      {shape === 'takeoff' ? (
+        <path d="M10 3 L17.5 16 L2.5 16 Z" fill="rgba(2,6,23,0.8)" stroke="#f43f5e" strokeWidth="2" strokeLinejoin="round" />
+      ) : (
+        <circle cx="10" cy="10" r="7" fill="rgba(2,6,23,0.8)" stroke="#f43f5e" strokeWidth="2" />
+      )}
+      <path d={shape === 'takeoff' ? 'M6.5 13.5 L13.5 7.5' : 'M6 14 L14 6'} stroke="#f43f5e" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  ),
+  thermal: (size = 16) => (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden>
+      <defs>
+        <radialGradient id="sym-th">
+          <stop offset="0" stopColor="#fff7d6" />
+          <stop offset="0.5" stopColor="#fb923c" />
+          <stop offset="1" stopColor="#ea580c" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="10" cy="10" r="9" fill="url(#sym-th)" />
+      <path d="M10 10 m0.6 0 a0.6 0.6 0 1 1 -1.2 0 a2 2 0 1 1 4 0 a3.6 3.6 0 1 1 -7.2 0 a5.2 5.2 0 1 1 10.4 0" fill="none" stroke="#fff" strokeWidth="1.2" />
+    </svg>
+  ),
+  hazard: (size = 16) => (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden>
+      <path d="M10 2 L18.4 17.2 L1.6 17.2 Z" fill="#f59e0b" stroke="#1f2937" strokeWidth="1.2" strokeLinejoin="round" />
+      <text x="10" y="15.4" textAnchor="middle" fontSize="10" fontWeight="800" fill="#1f2937">
+        !
+      </text>
+    </svg>
+  ),
+  soaring: (size = 16) => (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden>
+      <circle cx="10" cy="10" r="8" fill="#0d9488" stroke="#fff" strokeWidth="1.2" />
+      <path d="M4.5 12.5 Q10 3.5 15.5 10" fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  ),
+  zone: (color: string) => (
+    <svg width="22" height="12" viewBox="0 0 22 12" aria-hidden>
+      <path d="M4 6 H18" stroke={color} strokeWidth="10" strokeLinecap="round" opacity="0.25" />
+      <path d="M5 6 H17" stroke={color} strokeWidth="5" strokeLinecap="round" opacity="0.45" />
+    </svg>
+  ),
+  line: (color: string, dashed = false) => (
+    <svg width="22" height="10" viewBox="0 0 22 10" aria-hidden>
+      <path d="M1 5 H16" stroke={color} strokeWidth="3.2" strokeLinecap="round" strokeDasharray={dashed ? '3 3' : undefined} />
+      <path d="M15 1.5 L21 5 L15 8.5 Z" fill={color} />
+    </svg>
+  ),
 };
 
-/** What the colours and lines of the map mean (shown in the Calques panel). */
-export function LegendBody() {
-  const { overlay, particleColor, layers } = useApp();
-  const sites = layers.sitesOfficial || layers.takeoffs || layers.landings || layers.sitesCommunity;
+/** The spot symbols and what an outline means; shared by both views. */
+function SpotsBlock({ sites, thermals, hazards, soaring, landings }: { sites: boolean; thermals: boolean; hazards: boolean; soaring: boolean; landings: boolean }) {
+  if (!sites && !thermals && !hazards && !soaring && !landings) return null;
   return (
-    <div className="legend-body">
-      {sites && (
-        <div className="legend-block">
-          <h4>Sites de vol</h4>
-          <div className="swatches sym">
-            <span>{Sym.takeoff(true)} déco officiel FFVL</span>
-            <span>{Sym.takeoff(false)} déco non officiel</span>
-            <span>{Sym.landing(true)} atterro officiel FFVL</span>
-            <span>{Sym.landing(false)} atterro non officiel</span>
-          </div>
-          <p className="hint">Un seul symbole par lieu : le survol nomme le reste (piège, thermique…), la fiche le détaille.</p>
+    <div className="legend-block">
+      <h4>Sites et repères</h4>
+      <div className="swatches sym">
+        {sites && (
+          <>
+            <span>{Sym.takeoff(true)} déco conventionné FFVL</span>
+            <span>{Sym.takeoff(false)} déco non conventionné ou hors liste FFVL</span>
+          </>
+        )}
+        {landings && (
+          <>
+            <span>{Sym.landing(true)} atterro conventionné FFVL</span>
+            <span>{Sym.landing(false)} atterro non conventionné ou hors liste FFVL</span>
+          </>
+        )}
+        {sites && <span>{Sym.forbidden('takeoff')} déco interdit ou fermé (FFVL)</span>}
+        {landings && <span>{Sym.forbidden('landing')} atterro interdit ou fermé (FFVL)</span>}
+        {thermals && <span>{Sym.thermal()} thermique</span>}
+        {hazards && <span>{Sym.hazard()} piège</span>}
+        {soaring && <span>{Sym.soaring()} soaring</span>}
+      </div>
+      <p className="hint">Un symbole par lieu ; survolez-le pour son nom (et la raison d’une interdiction). Un site conventionné FFVL ouvre sa fiche FFVL.</p>
+    </div>
+  );
+}
+
+/** Folded state of the map legend, remembered in this browser. */
+function rememberedOpen(): boolean {
+  try {
+    return localStorage.getItem('brises.legend') !== 'folded';
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The legend on the map: what the symbols and lines shown right now mean, in the live map
+ * (the families switched on in Calques) and on a massif page (its own switches).
+ */
+export function MapLegend() {
+  const { layers, schemaLayers, schemaMassif, schemaPicking, tourStep } = useApp();
+  const [open, setOpen] = useState(rememberedOpen);
+  const mobile = useIsMobile();
+  if (mobile || tourStep !== null || (schemaPicking && !schemaMassif)) return null;
+  const toggle = () => {
+    setOpen(!open);
+    try {
+      localStorage.setItem('brises.legend', open ? 'folded' : 'open');
+    } catch {
+      // Not remembered: still applied for this visit.
+    }
+  };
+  const massif = !!schemaMassif;
+  return (
+    <section className={`legend panel ${open ? '' : 'closed'}`} aria-label="Légende">
+      <button className="legend-toggle" onClick={toggle} aria-expanded={open}>
+        Légende <IconChevron size={13} className="chev" />
+      </button>
+      {open && (
+        <div className="legend-body">
+          {massif ? (
+            <>
+              <SpotsBlock sites={schemaLayers.takeoffs} landings={schemaLayers.landings} thermals={schemaLayers.thermals} hazards={schemaLayers.hazards} soaring={schemaLayers.takeoffs} />
+              {(schemaLayers.breezes || schemaLayers.convergences || schemaLayers.routes) && (
+                <div className="legend-block">
+                  <h4>Lignes</h4>
+                  <div className="swatches sym">
+                    {schemaLayers.breezes && (
+                      <>
+                        <span>{Sym.line(BREEZE_COLORS.valley)} brise montante (journée)</span>
+                        <span>{Sym.line(BREEZE_COLORS.downvalley)} brise descendante (matin, soir)</span>
+                      </>
+                    )}
+                    {schemaLayers.convergences && <span>{Sym.zone(COLORS.convergence)} convergence (zone d’ascendance)</span>}
+                    {schemaLayers.routes && <span>{Sym.line(COLORS.route, true)} transition de cross</span>}
+                  </div>
+                  <p className="hint">Estompé : secteur voisin. Épaisseur d’une brise : sa force.</p>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <SpotsBlock sites={layers.sitesOfficial || layers.takeoffs || layers.sitesCommunity} landings={layers.sitesOfficial || layers.landings || layers.sitesCommunity} thermals={layers.thermals} hazards={layers.hazards} soaring={layers.soaring} />
+              <LegendBody />
+            </>
+          )}
         </div>
       )}
+    </section>
+  );
+}
+
+/** What the colours and lines of the live map mean (wind, analysis, breezes). */
+export function LegendBody() {
+  const { overlay, particleColor, layers } = useApp();
+  return (
+    <div className="legend-body">
       {layers.particles && (
         <div className="legend-block">
           <h4>{particleColor === 'speed' ? 'Vent simulé (km/h)' : 'Air montant / descendant'}</h4>
@@ -113,21 +247,28 @@ export function LegendBody() {
           </div>
         </div>
       )}
+      {layers.convergences && (
+        <div className="legend-block">
+          <h4>Convergences</h4>
+          <div className="swatches sym">
+            <span>{Sym.zone(COLORS.convergence)} zone d’ascendance (rencontre de brises)</span>
+          </div>
+        </div>
+      )}
       {(layers.breezes || layers.comets) && (
         <div className="legend-block">
-          <h4>Brises documentées</h4>
+          <h4>Brises</h4>
           <div className="swatches">
-            {(['valley', 'slope', 'lake', 'plain-to-mountain', 'pass-transfer', 'downvalley'] as const).map((k) => (
-              <span key={k}>
-                <i className="line" style={{ background: BREEZE_COLORS[k] }} /> {KIND_LABELS[k]}
-              </span>
-            ))}
+            <span>
+              <i className="line" style={{ background: BREEZE_COLORS.valley }} /> brise montante (journée)
+            </span>
+            <span>
+              <i className="line" style={{ background: BREEZE_COLORS.downvalley }} /> brise descendante (matin, soir)
+            </span>
             <span>
               <i className="line dashed" style={{ color: BREEZE_COLORS.valley }} /> déduction
             </span>
-            <span>
-              <i className="line" style={{ background: COLORS.convergence }} /> convergence
-            </span>
+
           </div>
         </div>
       )}

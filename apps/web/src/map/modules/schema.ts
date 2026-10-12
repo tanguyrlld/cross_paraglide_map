@@ -7,12 +7,12 @@
  * The live 3D layers are switched off by the controller meanwhile.
  */
 import { isPhoneLayout, phonePadding } from '../viewport';
-import type { AtlasFeature, FeatureCategory, FlyingSite } from '@brises/shared';
-import type { ExpressionSpecification, FilterSpecification, GeoJSONSource, Map as MlMap } from 'maplibre-gl';
+import type { FeatureCategory, FlyingSite } from '@brises/shared';
+import type { ExpressionSpecification, FilterSpecification, GeoJSONSource } from 'maplibre-gl';
 import { SCHEMA_PHASES, type AppState, type SchemaLayerKey, type SchemaPhase } from '../../state/store';
 import { BREEZE_COLORS, COLORS } from '../palette';
-import { activeInSlot, endBearing, loadSchemaBreezes, schemaBreezeById, schemaBreezesFor } from '../schema-breezes';
-import { alsoText, DIAGRAM_RADIUS_KM, loadOfficialSites, officialAt, resolveSpots, setDiagramSpots, type Spot } from '../spots';
+import { activeInSlot, addArrowImage, endBearing, loadSchemaBreezes, mapBreezeDetails, schemaBreezeById, schemaBreezesFor } from '../schema-breezes';
+import { banNote, ffvlSiteAt, ffvlStatus, hazardDuplicates, isSoaring, usableConvergences, loadOfficialSites, loadSkyways, type Skyway, resolveSpots, setDiagramSpots, type Spot } from '../spots';
 import { shortLabel } from './knowledge';
 
 export { activeInSlot };
@@ -71,24 +71,6 @@ const POINT_ICONS: Partial<Record<FeatureCategory, string>> = {
   soaring: 'soaring',
 };
 
-/** Hairline-free arrow drawn as a signed-distance field so it can take each breeze's colour. */
-function addArrowImage(map: MlMap): void {
-  if (map.hasImage('schema-arrow')) return;
-  const s = 48;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = s;
-  const c = canvas.getContext('2d')!;
-  c.fillStyle = '#fff';
-  c.beginPath();
-  c.moveTo(s * 0.2, s * 0.18);
-  c.lineTo(s * 0.82, s * 0.5);
-  c.lineTo(s * 0.2, s * 0.82);
-  c.lineTo(s * 0.36, s * 0.5);
-  c.closePath();
-  c.fill();
-  map.addImage('schema-arrow', c.getImageData(0, 0, s, s), { sdf: true, pixelRatio: 2 });
-}
-
 export class SchemaModule implements MapModule {
   readonly id = 'schema';
   readonly clickableLayers = ['schema-pick-fill', 'schema-pick-dot', 'schema-pick-label', 'schema-breeze', 'schema-conv', 'schema-conv-point', 'schema-points', 'schema-routes'];
@@ -103,6 +85,7 @@ export class SchemaModule implements MapModule {
   private threeD = false;
   private layers: AppState['schemaLayers'] | null = null;
   private officials: FlyingSite[] = [];
+  private skyways: Skyway[] = [];
   private phase: SchemaPhase = 'afternoon';
   /** Items a guided-visit step talks about: drawn whatever the switches say. */
   private forced = new Set<string>();
@@ -116,8 +99,9 @@ export class SchemaModule implements MapModule {
     this.ctx = ctx;
     const { map } = ctx;
     addArrowImage(map);
-    void Promise.all([loadSchemaBreezes(), loadOfficialSites()]).then(([, officials]) => {
+    void Promise.all([loadSchemaBreezes(), loadOfficialSites(), loadSkyways()]).then(([, officials, skyways]) => {
       this.officials = officials;
+      this.skyways = skyways;
       if (this.massif) this.render(this.massif, this.phase);
     });
     const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -136,7 +120,7 @@ export class SchemaModule implements MapModule {
         source: 'schema',
         filter: isCat('routes') as FilterSpecification,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': COLORS.route, 'line-width': 3, 'line-dasharray': [0.6, 1.6], 'line-opacity': ['*', 0.9, own] },
+        paint: { 'line-color': COLORS.route, 'line-width': ['+', 1.5, ['*', 0.9, ['coalesce', ['get', 'count'], 1]]], 'line-dasharray': [1.2, 1.4], 'line-opacity': ['*', 0.9, own] },
       },
       'lines',
     );
@@ -186,14 +170,20 @@ export class SchemaModule implements MapModule {
       },
       'lines',
     );
+    // Convergences: a soft band where pilots find the lift (same look as the live map).
     ctx.addLayer(
       {
         id: 'schema-conv-glow',
         type: 'line',
         source: 'schema',
         filter: ['all', isCat('convergences'), ['==', ['geometry-type'], 'LineString']],
-        layout: { 'line-cap': 'round' },
-        paint: { 'line-color': COLORS.convergence, 'line-width': 16, 'line-blur': 8, 'line-opacity': ['*', 0.45, own] },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': COLORS.convergence,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 6, 10, 9, 22, 12, 48],
+          'line-blur': ['interpolate', ['linear'], ['zoom'], 6, 8, 9, 16, 12, 34],
+          'line-opacity': ['*', 0.45, own],
+        },
       },
       'lines',
     );
@@ -203,8 +193,7 @@ export class SchemaModule implements MapModule {
         type: 'line',
         source: 'schema',
         filter: ['all', isCat('convergences'), ['==', ['geometry-type'], 'LineString']],
-        layout: { 'line-cap': 'round' },
-        paint: { 'line-color': '#f5d0fe', 'line-width': 3.5, 'line-dasharray': [1.2, 1.2], 'line-opacity': own },
+        paint: { 'line-color': '#000', 'line-opacity': 0.001, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 10, 12, 30] },
       },
       'lines',
     );
@@ -214,7 +203,7 @@ export class SchemaModule implements MapModule {
         type: 'circle',
         source: 'schema',
         filter: ['all', isCat('convergences'), ['==', ['geometry-type'], 'Point']],
-        paint: { 'circle-radius': 14, 'circle-color': 'rgba(232,121,249,0.28)', 'circle-stroke-color': '#f5d0fe', 'circle-stroke-width': 2.5, 'circle-opacity': own },
+        paint: { 'circle-radius': 22, 'circle-blur': 0.8, 'circle-color': COLORS.convergence, 'circle-opacity': ['*', 0.45, own] },
       },
       'lines',
     );
@@ -408,6 +397,11 @@ export class SchemaModule implements MapModule {
   }
 
   select(id: string, props: Record<string, unknown>): boolean {
+    // A conventionné FFVL site opens its FFVL page (the sheet shows too).
+    if (typeof props.ffvlUrl === 'string') {
+      window.open(props.ffvlUrl, '_blank', 'noopener');
+      return false;
+    }
     if (!this.pickShown() || props.name === undefined || !this.ctx!.atlas.massifs.some((m) => m.id === id)) return false;
     this.pick(id);
     return true;
@@ -487,23 +481,13 @@ export class SchemaModule implements MapModule {
     // Context margin: neighbours within ~15 km are drawn faded to show the transitions.
     const pad = 0.15;
     const [w, s, e, n] = [m.bbox[0] - pad, m.bbox[1] - pad, m.bbox[2] + pad, m.bbox[3] + pad];
-    // The 3 routes most contained in the sector (classic local routes first).
-    const [bw, bs, be, bn] = m.bbox;
-    const share = (f: AtlasFeature) => {
-      const cs = f.geometry.coordinates as [number, number][];
-      return cs.filter(([x, y]) => x >= bw && x <= be && y >= bs && y <= bn).length / cs.length;
-    };
-    const localRoutes = new Set(
-      atlas.features.routes
-        .filter((f) => share(f) >= 0.6)
-        .sort((a, b) => share(b) - share(a))
-        .slice(0, 3)
-        .map((f) => f.properties.id),
-    );
     const out: GeoJSON.Feature[] = [];
     const forced = this.forced;
+    const dups = hazardDuplicates(atlas);
+    const convs = usableConvergences(atlas);
     const boxed = (cs: [number, number][]) => cs.some(([x, y]) => x >= w && x <= e && y >= s && y <= n);
-    for (const b of schemaBreezesFor(atlas, massifId, slot, boxed, forced)) {
+    const breezes = schemaBreezesFor(atlas, massifId, slot, boxed, forced).filter((b) => this.layers?.breezes !== false || (!!b.properties.atlasId && forced.has(b.properties.atlasId)));
+    for (const b of breezes) {
       const p = b.properties;
       const own = p.massif === massifId;
       const cs = b.geometry.coordinates;
@@ -522,13 +506,21 @@ export class SchemaModule implements MapModule {
         const p = f.properties;
         if (forced.has(p.id)) return true;
         if (!familyOn) return false;
+        // The same hazard told by several sources: one icon (the others in its sheet).
+        if (cat === 'hazards' && dups.has(p.id)) return false;
+        if (cat === 'soaring' && !isSoaring(f)) return false;
+        if (cat === 'convergences' && !convs.has(p.id)) return false;
+        // Transitions: the skyways (below), not each route.
+        if (cat === 'routes') return false;
         const own = p.massif === massifId;
-        // A sector shows its own items (its neighbours' breezes only, faded, above).
-        if (!own) return false;
+        // Its own items, and (faded) the neighbours' spots inside its frame: the same spots as the live map there.
+        if (!own) {
+          if (f.geometry.type !== 'Point' || !SPOT_CATS.includes(cat) || p.massif === OVERVIEW) return false;
+          const [x, y] = f.geometry.coordinates;
+          if (x < m.bbox[0] || x > m.bbox[2] || y < m.bbox[1] || y > m.bbox[3]) return false;
+        }
         // Hotspots known only from GPS tracks stay on the live map: the diagram teaches documented phenomena.
         if (p.origin === 'kk7') return false;
-        // Routes: only the sector's own classic routes, not every cross passing by.
-        if (cat === 'routes' && massifId !== OVERVIEW && !localRoutes.has(p.id)) return false;
         return true;
       });
       for (const f of shown) {
@@ -554,6 +546,11 @@ export class SchemaModule implements MapModule {
         });
       }
     }
+    // Transitions: the skyways crossing the frame (main corridors), wider the more routes fly them.
+    if (this.layers?.routes !== false)
+      for (const sk of this.skyways)
+        if (sk.geometry.coordinates.some(([x, y]) => x >= m.bbox[0] && x <= m.bbox[2] && y >= m.bbox[1] && y <= m.bbox[3]))
+          out.push({ type: 'Feature', geometry: sk.geometry, properties: { id: sk.properties.id, category: 'routes', name: sk.properties.name, label: '', own: true, count: sk.properties.count } });
     // One icon per place (map/spots.ts); what a visit step points at keeps its own.
     const spotOf = (f: GeoJSON.Feature): Spot | null => {
       const p = f.properties!;
@@ -562,7 +559,7 @@ export class SchemaModule implements MapModule {
       return { ref: `atlas:${p.id}`, kind: p.category, lon, lat, name: p.name };
     };
     const spots = out.map(spotOf).filter((x): x is Spot => !!x);
-    const r = resolveSpots(spots, new Set([...forced].map((id) => `atlas:${id}`)), DIAGRAM_RADIUS_KM);
+    const r = resolveSpots(spots, new Set([...forced].map((id) => `atlas:${id}`)));
     setDiagramSpots(r);
     for (let i = out.length - 1; i >= 0; i--) {
       const sp = spotOf(out[i]);
@@ -572,13 +569,16 @@ export class SchemaModule implements MapModule {
         continue;
       }
       const p = out[i].properties!;
-      p.also = alsoText(r.also.get(sp.ref));
       // Solid for an official FFVL site, outlined otherwise; hazards named on hover only.
       if (sp.kind === 'takeoffs' || sp.kind === 'landings') {
         const kind = sp.kind === 'takeoffs' ? 'takeoff' : 'landing';
-        p.icon = officialAt(this.officials, kind, sp.lon, sp.lat) ? kind : `${kind}-community`;
+        const site = ffvlSiteAt(this.officials, kind, sp.lon, sp.lat);
+        const status = site ? ffvlStatus(site) : null;
+        p.icon = status === 'official' ? kind : status === 'forbidden' ? `${kind}-forbidden` : `${kind}-community`;
+        if (status === 'forbidden') p.note = banNote(site!);
+        if (status === 'official' && site?.url) p.ffvlUrl = site.url;
       }
-      if (sp.kind === 'hazards') p.label = '';
+      if (sp.kind === 'hazards' || sp.kind === 'soaring') p.label = '';
     }
     out.push({ type: 'Feature', geometry: { type: 'Point', coordinates: m.center }, properties: { category: 'title', label: m.shortName.toUpperCase(), own: true } });
     (map.getSource('schema') as GeoJSONSource).setData({ type: 'FeatureCollection', features: out });
@@ -620,7 +620,7 @@ export class SchemaModule implements MapModule {
     const dimmed: [string, string][] = [
       ['schema-breeze', 'line-opacity'],
       ['schema-breeze-arrows', 'icon-opacity'],
-      ['schema-conv', 'line-opacity'],
+      ['schema-conv-glow', 'line-opacity'],
       ['schema-routes', 'line-opacity'],
       ['schema-points', 'icon-opacity'],
       ['schema-points', 'text-opacity'],
@@ -635,24 +635,9 @@ export class SchemaModule implements MapModule {
   }
 
   describe(id: string, given: Record<string, unknown> = {}): FeatureDetails | null {
+    if (id.startsWith('skyway:')) return this.describeAtlas(id);
     if (!id.startsWith('carte:')) return this.describeAtlas(id);
-    const line = schemaBreezeById(id);
-    const props: Record<string, unknown> = { ...line?.properties, ...given };
-    if (props.atlasId) return this.describeAtlas(String(props.atlasId));
-    const cs = line?.geometry.coordinates ?? [];
-    const xs = cs.map((c) => c[0]);
-    const ys = cs.map((c) => c[1]);
-    return {
-      ref: `schema:${id}`,
-      category: 'breezes',
-      title: String(props.name ?? 'Brise'),
-      subtitle: 'Brise montante de la journée',
-      paragraphs: [
-        `Tracée sur la carte « Brises des Alpes » de Franck Largeault${props.mapLayer ? ` (couche ${props.mapLayer})` : ''}, compilation des cartes de vol libre des parcs naturels, de la carte de Julien Wirtz, de la carte suisse des brises et de récits de pilotes. Aucune autre source de l'atlas ne la décrit en détail.`,
-      ],
-      sourceIds: ['chablais_giffre_arve:S69'],
-      bbox: xs.length ? [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] : [5, 44, 7, 46],
-      massifId: this.massif ?? undefined,
-    };
+    const atlasId = given.atlasId ?? schemaBreezeById(id)?.properties.atlasId;
+    return atlasId ? this.describeAtlas(String(atlasId)) : mapBreezeDetails(id, this.massif ?? undefined);
   }
 }

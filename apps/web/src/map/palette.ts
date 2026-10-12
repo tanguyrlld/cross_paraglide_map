@@ -1,13 +1,16 @@
 /** Shared colours of the map vocabulary (layers, legend, side sheet). */
+/** Two families only: the day's upslope flows (blue) and the down-slope drainage of the morning and evening (violet). */
+const UP = '#38bdf8';
+const DOWN = '#a78bfa';
 export const BREEZE_COLORS: Record<string, string> = {
-  valley: '#38bdf8',
-  downvalley: '#818cf8',
-  slope: '#fbbf24',
-  'plain-to-mountain': '#2dd4bf',
-  lake: '#7dd3fc',
-  'pass-transfer': '#f472b6',
-  regional: '#5eead4',
-  katabatic: '#a5b4fc',
+  valley: UP,
+  slope: UP,
+  'plain-to-mountain': UP,
+  lake: UP,
+  'pass-transfer': UP,
+  regional: UP,
+  downvalley: DOWN,
+  katabatic: DOWN,
 };
 
 export const COLORS = {

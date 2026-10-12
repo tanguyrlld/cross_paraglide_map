@@ -1847,6 +1847,9 @@ kbd {
   font-size: 12px;
   font-weight: 500;
   box-shadow: var(--shadow);
+  /* A forbidden site says why on a second line. */
+  white-space: pre-line;
+  max-width: 280px;
 }
 
 .hover-tip .maplibregl-popup-tip {
@@ -4208,4 +4211,39 @@ div.summary {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Map legend: bottom left of the map, right of the left column, above the time bar. */
+@media (min-width: 861px) {
+  .legend {
+    left: var(--gap);
+    bottom: calc(var(--gap) * 2 + var(--timebar-h));
+    max-width: 290px;
+    max-height: calc(100dvh - var(--timebar-h) - 200px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+  .wind-side .legend {
+    left: calc(var(--wind-w) + var(--gap) * 2);
+  }
+  .side-open .legend {
+    left: calc(var(--side-w) + var(--gap) * 2);
+  }
+  .legend.closed {
+    max-width: none;
+  }
+}
+
+.legend .swatches.sym {
+  display: grid;
+  gap: 3px;
+}
+
+.legend .hint {
+  margin: 5px 0 0;
+  font-size: 10.5px;
+}
+
+.schema-layers .chip svg {
+  flex: none;
 }

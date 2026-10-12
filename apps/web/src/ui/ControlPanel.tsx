@@ -6,7 +6,6 @@ import { useApp, useRuntime, type LayerKey } from '../state/store';
 import { getController, getDataClient } from './controller-ref';
 import { fmtHour, MONTHS } from './format';
 import { IconChevron, IconDownload, IconMountain, IconSpark, IconWind } from './icons';
-import { LegendBody } from './Legend';
 import { useIsMobile } from './mobile';
 import { WindDial } from './WindDial';
 
@@ -69,7 +68,7 @@ const TILES: TileDef[] = [
     hint: 'Décos et attéros FFVL et cités',
     color: COLORS.takeoff,
     items: [
-      { key: 'sitesOfficial', label: 'Sites officiels FFVL', color: COLORS.takeoff },
+      { key: 'sitesOfficial', label: 'Sites de la liste FFVL', color: COLORS.takeoff },
       { key: 'takeoffs', label: 'Décos cités par les sources', color: COLORS.takeoff },
       { key: 'landings', label: 'Attéros cités par les sources', color: COLORS.landing },
       { key: 'sitesCommunity', label: 'Sites communautaires (OSM, PGE)', color: COLORS.takeoffCommunity },
@@ -339,10 +338,6 @@ export function LayersPanel() {
         </div>
       </section>
 
-      <section className="cp-block">
-        <h3 className="cp-title">Légende</h3>
-        <LegendBody />
-      </section>
       <Section title="Plus d’options" icon={<IconSpark size={16} />} defaultOpen={false}>
         {mobile && (
           <>

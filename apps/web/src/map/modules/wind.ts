@@ -13,6 +13,7 @@ import { supportsFloatTargets } from '../../gpu/gl-utils';
 import { WindScene, type ThermalSpot, type SceneSettings } from '../../gpu/wind-scene';
 import { CURRENT_YEAR, type AppState } from '../../state/store';
 import { BREEZE_COLORS } from '../palette';
+import { liveBreezes, loadSchemaBreezes } from '../schema-breezes';
 import { WindParticleLayer, type ParticleSettings } from '../wind-particles';
 import type { MapModule, ModuleContext } from './types';
 
@@ -68,6 +69,11 @@ export class WindModule implements MapModule {
       this.scene = new WindScene(ctx.grid, pack, this.curated, BREEZE_COLORS, this.sceneSettings());
       this.scene.setThermalSpots(this.thermalSpots);
       this.scene.setOnUpdated(this.onUpdated);
+      // Flows animated along the same breezes as the map draws (one per valley).
+      void loadSchemaBreezes().then(() => {
+        const ids = new Set(liveBreezes(ctx.atlas).map((b) => b.properties.atlasId).filter((x): x is string => !!x));
+        this.scene?.setCometBreezes(ids.size ? ids : null);
+      });
       ctx.addLayer(this.scene.engineLayer, 'base');
       ctx.addLayer(this.scene.drapeLayer, 'analysis');
       ctx.addLayer(this.scene.sceneLayer, 'scene');

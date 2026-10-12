@@ -58,7 +58,7 @@ const ICONS: Record<string, { size: number; draw: Draw }> = {
       c.fillText('A', s / 2, s / 2 + s * 0.02);
     },
   },
-  // Not official (cited by the sources, OSM, ParaglidingEarth): the same shapes, outlined instead of solid.
+  // Not official: a take-off is the same green triangle without the white outline; a landing is outlined.
   'takeoff-community': {
     size: 40,
     draw: (c, s) => {
@@ -67,12 +67,9 @@ const ICONS: Record<string, { size: number; draw: Draw }> = {
       c.lineTo(s * 0.86, s * 0.8);
       c.lineTo(s * 0.14, s * 0.8);
       c.closePath();
-      c.fillStyle = 'rgba(2, 6, 23, 0.78)';
+      // Plain green, no white outline (the official take-off has one).
+      c.fillStyle = '#16a34a';
       c.fill();
-      c.lineJoin = 'round';
-      c.lineWidth = s * 0.1;
-      c.strokeStyle = '#4ade80';
-      c.stroke();
     },
   },
   'landing-community': {
@@ -90,6 +87,46 @@ const ICONS: Record<string, { size: number; draw: Draw }> = {
       c.textAlign = 'center';
       c.textBaseline = 'middle';
       c.fillText('A', s / 2, s / 2 + s * 0.02);
+    },
+  },
+  // FFVL: flying forbidden or the site temporarily closed.
+  'takeoff-forbidden': {
+    size: 40,
+    draw: (c, s) => {
+      c.beginPath();
+      c.moveTo(s * 0.5, s * 0.14);
+      c.lineTo(s * 0.86, s * 0.8);
+      c.lineTo(s * 0.14, s * 0.8);
+      c.closePath();
+      c.fillStyle = 'rgba(2, 6, 23, 0.78)';
+      c.fill();
+      c.lineJoin = 'round';
+      c.lineWidth = s * 0.1;
+      c.strokeStyle = '#f43f5e';
+      c.stroke();
+      c.lineCap = 'round';
+      c.lineWidth = s * 0.09;
+      c.beginPath();
+      c.moveTo(s * 0.3, s * 0.68);
+      c.lineTo(s * 0.7, s * 0.36);
+      c.stroke();
+    },
+  },
+  'landing-forbidden': {
+    size: 36,
+    draw: (c, s) => {
+      c.beginPath();
+      c.arc(s / 2, s / 2, s * 0.33, 0, Math.PI * 2);
+      c.fillStyle = 'rgba(2, 6, 23, 0.78)';
+      c.fill();
+      c.lineWidth = s * 0.1;
+      c.strokeStyle = '#f43f5e';
+      c.stroke();
+      c.lineCap = 'round';
+      c.beginPath();
+      c.moveTo(s * 0.3, s * 0.7);
+      c.lineTo(s * 0.7, s * 0.3);
+      c.stroke();
     },
   },
   hazard: {

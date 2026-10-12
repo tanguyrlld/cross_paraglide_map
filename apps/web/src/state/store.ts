@@ -16,7 +16,7 @@ export const SCHEMA_PHASES: { key: SchemaPhase; label: string; hours: [number, n
 ];
 
 /** What the massif diagram shows besides its breezes (always drawn). */
-export type SchemaLayerKey = 'thermals' | 'hazards' | 'takeoffs' | 'landings' | 'convergences' | 'routes';
+export type SchemaLayerKey = 'breezes' | 'thermals' | 'hazards' | 'takeoffs' | 'landings' | 'convergences' | 'routes';
 
 /** Panels shown as bottom sheets on phones (one at a time). */
 export type MobileSheet = 'none' | 'browse';
@@ -176,7 +176,7 @@ export const useApp = create<AppState>((set) => ({
   // Massif diagrams in relief by default (flat on demand).
   schema3d: true,
   schemaWind: false,
-  schemaLayers: { thermals: true, hazards: true, takeoffs: true, landings: false, convergences: false, routes: false },
+  schemaLayers: { breezes: true, thermals: true, hazards: true, takeoffs: true, landings: false, convergences: false, routes: false },
   tourStep: null,
   panelOpen: !isSmall,
   popover: null,

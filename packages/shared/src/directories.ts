@@ -58,7 +58,8 @@ export const osmSites: SiteProvider = {
           orientations: parseOrientations(tags['free_flying:site_orientation'] ?? tags['free_flying:takeoff:direction'] ?? tags.direction),
           description: tags.description,
           url: tags.website ?? tags.url ?? `https://www.openstreetmap.org/${el.type}/${el.id}`,
-          status: /ffvl|fédération/i.test(tags.operator ?? '') ? 'official' : 'community',
+          // Official status comes from the FFVL list only, never from a free-text OSM tag.
+          status: 'community',
         },
       ];
     });

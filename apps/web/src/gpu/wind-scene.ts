@@ -54,6 +54,7 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 interface CometTrack {
+  id: string;
   pts: Float64Array; // cells x, y
   cum: Float64Array; // cumulative length (cells)
   length: number;
@@ -116,6 +117,13 @@ export class WindScene {
 
   // Comets.
   private tracks: CometTrack[] = [];
+  /** Breezes whose flow is animated (the map's one-arrow-per-valley set); null = all. */
+  private cometIds: Set<string> | null = null;
+
+  /** Animates only these breezes (the physical model keeps them all). */
+  setCometBreezes(ids: Set<string> | null): void {
+    this.cometIds = ids;
+  }
   private cometVao: WebGLVertexArrayObject | null = null;
   private cometVbo: WebGLBuffer | null = null;
   private cometIbo: WebGLBuffer | null = null;
@@ -142,6 +150,7 @@ export class WindScene {
       const length = cum[cum.length - 1] || 0;
       const n = Math.max(1, Math.min(10, Math.round(length / 22)));
       return {
+        id: b.id,
         pts,
         cum,
         length,
@@ -575,7 +584,7 @@ export class WindScene {
       gl.uniform1f(u.uAsl, this.settings.heightMode === 'asl' ? 1 : 0);
       const zoom = this.map!.getZoom();
       const zt = Math.min(1, Math.max(0, (zoom - 7) / 4));
-      gl.uniform1f(u.uWidth, (1.0 + 0.7 * zt) * dpr);
+      gl.uniform1f(u.uWidth, (1.4 + 0.9 * zt) * dpr);
       gl.uniform1f(u.uZoomAlpha, 0.38 + 0.62 * zt);
       gl.uniform1f(u.uColorMode, this.settings.colorMode === 'lift' ? 1 : 0);
       gl.uniform1f(u.uLiftZ, this.settings.heightMode === 'agl' ? 25 : 0);
@@ -627,6 +636,7 @@ export class WindScene {
     let comets = 0;
     for (const tr of this.tracks) {
       if (tr.length < 2) continue;
+      if (this.cometIds && !this.cometIds.has(tr.id)) continue;
       // Conditional breezes only stream when their condition holds (field.ts → curatedActivity).
       const cond = tr.condition ? conditionFactor(tr.condition, params) : 1;
       const act = cond * (tr.window ? windowActivity(params.hour, tr.window) : tr.condition?.wind ? 1 : windowActivity(params.hour, [11, 19]));

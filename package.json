@@ -15,6 +15,7 @@
     "data:build": "tsx scripts/build-data.ts",
     "data:airspace": "tsx scripts/build-airspace.ts",
     "data:schema-breezes": "tsx scripts/build-schema-breezes.ts",
+    "data:skyways": "tsx scripts/build-skyways.ts",
     "data:sites": "tsx scripts/import-sites.ts",
     "data:contributions": "tsx scripts/import-contributions.ts",
     "model:check": "tsx scripts/check-model.ts",

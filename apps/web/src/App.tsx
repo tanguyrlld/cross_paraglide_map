@@ -13,7 +13,8 @@ import { Sidebar } from './ui/Sidebar';
 import { TimeBar } from './ui/TimeBar';
 import { MassifTour } from './ui/Tour';
 import { Welcome } from './ui/Welcome';
-import { WindPanel } from './ui/WindPanel';
+import { MapLegend } from './ui/Legend';
+import { useWindPanelVisible, WindPanel } from './ui/WindPanel';
 import { useApp, useRuntime } from './state/store';
 
 function StatusPill() {
@@ -84,13 +85,16 @@ export default function App() {
   const probe = useRuntime((r) => r.probe);
   const mobile = useIsMobile();
   const sideOpen = !mobile && (browseOpen || schemaPicking || !!feature || !!probe || !!schemaMassif);
+  // Only the narrow wind panel in the left column: the map legend starts right after it.
+  const windPanel = useWindPanelVisible();
+  const windSide = !sideOpen && windPanel;
   // Phone: one bottom sheet at a time (the visit, a popover or the panel); the time bar only when none is open.
   const visit = mobile && tourStep !== null && !!schemaMassif;
   const sheet = mobile && (visit || !!popover || mobileSheet === 'browse');
   useSheetLayout(visit);
   useShortcuts();
   return (
-    <div className={`app ${mobile ? 'is-mobile' : ''} ${sideOpen ? 'side-open' : ''} ${sheet ? 'has-sheet' : ''} ${visit ? 'in-visit' : ''}`}>
+    <div className={`app ${mobile ? 'is-mobile' : ''} ${sideOpen ? 'side-open' : ''} ${windSide ? 'wind-side' : ''} ${sheet ? 'has-sheet' : ''} ${visit ? 'in-visit' : ''}`}>
       <MapView />
       <header className="topbar panel">
         <div className="brand">
@@ -120,6 +124,7 @@ export default function App() {
       <TimeBar />
       <MapTools />
       {!mobile && <BasemapSwitch />}
+      <MapLegend />
       <Popover />
       <MobileDock />
       <MobileRail />

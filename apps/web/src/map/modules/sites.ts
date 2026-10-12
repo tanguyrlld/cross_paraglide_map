@@ -6,7 +6,7 @@
 import type { FlyingSite, SiteProvider } from '@brises/shared';
 import type { ExpressionSpecification } from 'maplibre-gl';
 import type { AppState } from '../../state/store';
-import { liveSpots, onLiveSpots, RADIUS_KM } from '../spots';
+import { banNote, banReason, FFVL_STATUS_LABEL, ffvlStatus, liveSpots, onLiveSpots, RADIUS_KM } from '../spots';
 import { bboxOf, relatedOf, type FeatureDetails, type MapModule, type ModuleContext } from './types';
 
 const KIND_LABEL = { takeoff: 'Décollage', landing: 'Atterrissage', site: 'Site de vol' } as const;
@@ -32,7 +32,7 @@ export class SitesModule implements MapModule {
     this.ctx = ctx;
     const { map } = ctx;
     map.addSource('ext-sites', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-    const official = ['==', ['get', 'status'], 'official'] as ExpressionSpecification;
+    const icon = (kind: string) => ['match', ['get', 'status'], 'official', kind, 'forbidden', `${kind}-forbidden`, `${kind}-community`] as ExpressionSpecification;
     for (const kind of ['landing', 'takeoff'] as const)
       ctx.addLayer(
         {
@@ -42,7 +42,7 @@ export class SitesModule implements MapModule {
           minzoom: 9.5,
           filter: ['all', ['==', ['get', 'kind'], kind === 'takeoff' ? 'takeoff' : 'landing'], ['!', ['get', 'dup']]],
           layout: {
-            'icon-image': ['case', official, kind, `${kind}-community`],
+            'icon-image': icon(kind),
             'icon-size': ['interpolate', ['linear'], ['zoom'], 8, 0.45, 13, 0.85],
             'icon-allow-overlap': true,
             // Names from closer in: the documented climbs and hazards keep their labels first.
@@ -121,7 +121,8 @@ export class SitesModule implements MapModule {
     const map = this.ctx?.map;
     const src = map?.getSource('ext-sites') as { setData?: (d: GeoJSON.FeatureCollection) => void } | undefined;
     if (!src?.setData) return;
-    const list = [...this.sites.entries()].filter(([, s]) => (s.status === 'official' ? this.showOfficial : this.showCommunity));
+    // The FFVL list with the « Sites FFVL » switch, the community directories with theirs.
+    const list = [...this.sites.entries()].filter(([, s]) => (s.provider === 'ffvl' ? this.showOfficial : this.showCommunity));
     // One icon per place: an official site that lost its place to another item, and any community entry
     // where an item is already drawn, carry no icon.
     const live = liveSpots();
@@ -136,13 +137,21 @@ export class SitesModule implements MapModule {
         properties: {
           id: key,
           kind: s.kind === 'site' ? 'takeoff' : s.kind,
-          status: s.status ?? 'community',
+          status: ffvlStatus(s),
+          ...(ffvlStatus(s) === 'forbidden' ? { note: banNote(s) } : {}),
           name: s.name,
           ...(s.orientations?.length ? { orient: s.orientations.join(' ') } : {}),
-          dup: s.status === 'official' ? live.hidden.has(`${this.id}:${key}`) : taken(s),
+          dup: s.provider === 'ffvl' ? live.hidden.has(`${this.id}:${key}`) : taken(s),
         },
       })),
     });
+  }
+
+  /** A conventionné FFVL site opens its FFVL page (the sheet shows too). */
+  select(id: string): boolean {
+    const s = this.sites.get(id);
+    if (s?.provider === 'ffvl' && s.url && ffvlStatus(s) === 'official') window.open(s.url, '_blank', 'noopener');
+    return false;
   }
 
   describe(id: string): FeatureDetails | null {
@@ -153,7 +162,10 @@ export class SitesModule implements MapModule {
       ref: `${this.id}:${id}`,
       category: KIND_LABEL[s.kind],
       title: s.name,
-      badges: [{ label: s.status === 'official' ? 'Site officiel' : 'Annuaire communautaire', tone: s.status === 'official' ? 'ok' : 'info' }, { label: provider?.label ?? s.provider }],
+      badges: [
+        { label: s.provider === 'ffvl' ? FFVL_STATUS_LABEL[ffvlStatus(s)] : 'Hors liste FFVL', tone: ffvlStatus(s) === 'official' ? 'ok' : ffvlStatus(s) === 'forbidden' ? 'bad' : 'warn' },
+        { label: provider?.label ?? s.provider },
+      ],
       details: [
         ...(s.altitude ? ([['Altitude', `${Math.round(s.altitude)} m`]] as [string, string][]) : []),
         ...(s.orientations?.length ? ([['Orientation', s.orientations.join(', ')]] as [string, string][]) : []),
@@ -164,13 +176,15 @@ export class SitesModule implements MapModule {
         ...(s.description ? [s.description] : []),
         ...LONG_FACTS.filter((k) => s.details?.[k]).map((k) => `${k} : ${s.details![k]}`),
       ],
-      links: s.url ? [{ label: s.provider === 'ffvl' ? 'Fiche FFVL complète' : 'Fiche du site', url: s.url }] : undefined,
+      links: s.url ? [{ label: s.provider === 'ffvl' ? 'Fiche du site sur le site de la FFVL' : 'Fiche du site', url: s.url }] : undefined,
       warning:
-        s.status !== 'official'
-          ? 'Site issu d’un annuaire communautaire : statut, accès et autorisations à vérifier localement.'
-          : /interdit/i.test(s.details?.['Praticabilité'] ?? '')
-            ? `Attention : ${s.details!['Praticabilité']}. Consultez la fiche FFVL.`
-            : 'Extrait de la fiche FFVL : consultez la fiche complète et les consignes locales avant de voler.',
+        s.provider !== 'ffvl'
+          ? 'Site absent de la liste FFVL (annuaire communautaire) : statut, accès et autorisations à vérifier localement.'
+          : ffvlStatus(s) === 'forbidden'
+            ? `Pratique interdite selon la FFVL : ${banReason(s)}`
+            : ffvlStatus(s) === 'unofficial'
+              ? `Selon la FFVL : ${s.details?.['Conventionnement'] ?? 'pas de convention FFVL identifiée'}. Vous y volez sous votre propre responsabilité.`
+              : 'Extrait de la fiche FFVL : consultez la fiche complète et les consignes locales avant de voler.',
       attribution: provider?.attribution,
       related: relatedOf(`${this.id}:${id}`),
       bbox: bboxOf([[s.lon, s.lat]]),

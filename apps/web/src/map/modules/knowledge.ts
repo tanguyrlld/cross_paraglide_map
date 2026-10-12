@@ -6,7 +6,8 @@
 import { isPhoneLayout } from '../viewport';
 import type { FlyingSite } from '@brises/shared';
 import type { GeoJSONSource } from 'maplibre-gl';
-import { alsoText, loadOfficialSites, officialAt, resolveSpots, setLiveSpots, type Spot } from '../spots';
+import { addArrowImage, blowingNow, distinctAt, endBearing, liveBreezes, loadSchemaBreezes, mapBreezeDetails, schemaBreezeById, type SchemaBreeze } from '../schema-breezes';
+import { banNote, banReason, ffvlSiteAt, FFVL_STATUS_LABEL, hazardAccounts, hazardDuplicates, isSoaring, usableConvergences, loadSkyways, skywayById, ffvlStatus, loadOfficialSites, resolveSpots, setLiveSpots, type Spot, type SpotKind } from '../spots';
 import type { ExpressionSpecification, SymbolLayerSpecification } from 'maplibre-gl';
 import type { AtlasFeature, FeatureCategory } from '@brises/shared';
 import { windowActivity } from '@brises/model';
@@ -17,14 +18,14 @@ import { BREEZE_COLORS, COLORS } from '../palette';
 import { bboxOf, relatedOf, type FeatureDetails, type MapModule, type ModuleContext } from './types';
 
 const GROUPS: Partial<Record<LayerKey, string[]>> = {
-  breezes: ['breezes-glow', 'breezes-core', 'breezes-core-low', 'breezes-arrows', 'breezes-hit', 'breezes-label'],
-  convergences: ['convergences-glow', 'convergences-line', 'convergences-point'],
+  breezes: ['breezes-casing', 'breezes-core', 'breezes-arrows', 'breezes-hit'],
+  convergences: ['convergences-glow', 'convergences-line'],
   hazards: ['hazards'],
   thermals: ['thermals', 'thermals-measured'],
   soaring: ['soaring'],
   takeoffs: ['takeoffs'],
   landings: ['landings'],
-  routes: ['routes-line', 'routes-label'],
+  routes: ['routes-line'],
   labels: ['massif-labels'],
 };
 
@@ -32,6 +33,8 @@ const POINT_CATS = ['takeoffs', 'landings', 'soaring', 'hazards', 'thermals'] as
 type PointCat = (typeof POINT_CATS)[number];
 /** Layer switches that change which item carries a place. */
 const SPOT_LAYERS = [...POINT_CATS, 'sitesOfficial'] as const;
+
+const nonEmpty = <T,>(list: T[]) => (list.length ? list : undefined);
 
 /** Short map label: no parenthetical, cut at a dash or comma, at most ~30 characters. */
 export function shortLabel(name: string): string {
@@ -42,7 +45,7 @@ export function shortLabel(name: string): string {
 
 export class KnowledgeModule implements MapModule {
   readonly id = 'atlas';
-  readonly clickableLayers = ['breezes-hit', 'convergences-line', 'convergences-point', 'hazards', 'thermals', 'thermals-measured', 'soaring', 'takeoffs', 'landings', 'routes-line'];
+  readonly clickableLayers = ['breezes-hit', 'convergences-line', 'hazards', 'thermals', 'thermals-measured', 'soaring', 'takeoffs', 'landings', 'routes-line'];
   private ctx: ModuleContext | null = null;
   private index = new Map<string, AtlasFeature>();
   /** Point features as first added (labelled), re-sent with their icon decisions. */
@@ -56,10 +59,14 @@ export class KnowledgeModule implements MapModule {
     for (const list of Object.values(atlas.features)) for (const f of list) this.index.set(f.properties.id, f);
     for (const cat of Object.keys(atlas.features) as FeatureCategory[]) {
       // Map labels use a short name; the full one stays in the sheet.
-      const features = atlas.features[cat].map((f) => ({ ...f, properties: { ...f.properties, label: shortLabel(f.properties.name) } }));
+      const usable = cat === 'convergences' ? usableConvergences(atlas) : null;
+      const features = atlas.features[cat].filter((f) => !usable || usable.has(f.properties.id)).map((f) => ({ ...f, properties: { ...f.properties, label: shortLabel(f.properties.name) } }));
       if ((POINT_CATS as readonly string[]).includes(cat)) this.points.set(cat as PointCat, features as GeoJSON.Feature[]);
       map.addSource(cat, { type: 'geojson', data: { type: 'FeatureCollection', features } as GeoJSON.FeatureCollection });
     }
+    void loadSchemaBreezes().then(() => this.setBreezes());
+    // The routes layer shows the skyways (main corridors), not each route.
+    void loadSkyways().then((list) => (map.getSource('routes') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: list }));
     void loadOfficialSites().then((list) => {
       this.officials = list;
       if (this.shown) this.resolve(this.shown);
@@ -84,100 +91,84 @@ export class KnowledgeModule implements MapModule {
         type: 'line',
         source: 'routes',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': COLORS.route, 'line-width': ['interpolate', ['linear'], ['zoom'], 7, 1.5, 12, 3], 'line-dasharray': [2, 2], 'line-opacity': 0.9 },
+        // Skyways: wider the more documented routes fly them.
+        paint: {
+          'line-color': COLORS.route,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 7, ['+', 1, ['*', 0.5, ['coalesce', ['get', 'count'], 1]]], 12, ['+', 2, ['*', 1.2, ['coalesce', ['get', 'count'], 1]]]],
+          'line-dasharray': [2, 1.5],
+          'line-opacity': 0.85,
+        },
+      },
+      'lines',
+    );
+    // Breezes: one wide arrow per valley (as on the massif pages), lighter so the wind and the spots stay on top.
+    addArrowImage(map);
+    map.addSource('breeze-heads', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    // Width follows the documented strength; `add` widens the casing (zoom must stay the top-level input).
+    const width = (k: number, add = 0) =>
+      ['interpolate', ['linear'], ['zoom'], 7, ['+', add, ['*', k, ['+', 1.5, ['*', 0.08, ['get', 'speedKmh']]]]], 12, ['+', add, ['*', k, ['+', 3.5, ['*', 0.22, ['get', 'speedKmh']]]]]] as unknown as ExpressionSpecification;
+    ctx.addLayer(
+      {
+        id: 'breezes-casing',
+        type: 'line',
+        source: 'breezes',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#020617', 'line-width': width(1, 2), 'line-opacity': ['*', 0.35, active] },
       },
       'lines',
     );
     ctx.addLayer(
       {
-        id: 'breezes-glow',
+        id: 'breezes-core',
         type: 'line',
         source: 'breezes',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: {
-          'line-color': kindColor,
-          'line-width': ['interpolate', ['linear'], ['zoom'], 6, ['*', 0.25, ['get', 'speedKmh']], 12, ['*', 1.1, ['get', 'speedKmh']]],
-          'line-blur': ['interpolate', ['linear'], ['zoom'], 6, 3, 12, 12],
-          'line-opacity': ['*', 0.28, active, conf],
-        },
+        paint: { 'line-color': kindColor, 'line-width': width(1), 'line-opacity': ['*', 0.62, active, conf] },
       },
       'lines',
     );
-    // Sourced breezes are solid, deductions (low confidence) dashed.
-    for (const [id, low] of [
-      ['breezes-core', false],
-      ['breezes-core-low', true],
-    ] as const)
-      ctx.addLayer(
-        {
-          id,
-          type: 'line',
-          source: 'breezes',
-          filter: low ? ['==', ['get', 'confidence'], 'low'] : ['!=', ['get', 'confidence'], 'low'],
-          layout: { 'line-cap': low ? 'butt' : 'round', 'line-join': 'round' },
-          paint: {
-            'line-color': kindColor,
-            'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 12, 2.5],
-            'line-opacity': ['*', 0.75, active, conf],
-            ...(low ? { 'line-dasharray': [2, 2] } : {}),
-          },
-        },
-        'lines',
-      );
     ctx.addLayer(
       {
         id: 'breezes-arrows',
         type: 'symbol',
-        source: 'breezes',
+        source: 'breeze-heads',
         layout: {
-          'symbol-placement': 'line',
-          'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 7, 70, 13, 160],
-          'icon-image': 'breeze-arrow',
-          'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.5, 13, 0.95],
+          'icon-image': 'schema-arrow',
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.65, 12, 1.15],
+          'icon-rotate': ['get', 'rotate'],
           'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
           'icon-rotation-alignment': 'map',
           'icon-pitch-alignment': 'map',
         },
-        paint: { 'icon-opacity': ['*', active, conf] },
+        paint: { 'icon-color': kindColor, 'icon-halo-color': '#020617', 'icon-halo-width': 1, 'icon-opacity': ['*', 0.8, active, conf] },
       },
       'lines',
     );
     ctx.addLayer({ id: 'breezes-hit', type: 'line', source: 'breezes', paint: { 'line-color': '#000', 'line-opacity': 0.001, 'line-width': 18 } }, 'lines');
+    // Convergences: a soft band where pilots find the lift, not a precise line.
     ctx.addLayer(
       {
         id: 'convergences-glow',
         type: 'line',
         source: 'convergences',
-        filter: ['==', ['geometry-type'], 'LineString'],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': COLORS.convergence, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 6, 12, 22], 'line-blur': 10, 'line-opacity': 0.4 },
+        paint: {
+          'line-color': COLORS.convergence,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 6, 10, 9, 22, 12, 48],
+          'line-blur': ['interpolate', ['linear'], ['zoom'], 6, 8, 9, 16, 12, 34],
+          'line-opacity': 0.42,
+        },
       },
       'lines',
     );
+    // Wide and invisible: the band is clickable anywhere.
     ctx.addLayer(
       {
         id: 'convergences-line',
         type: 'line',
         source: 'convergences',
-        filter: ['==', ['geometry-type'], 'LineString'],
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#f5d0fe', 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.5, 12, 3.5], 'line-dasharray': [1, 1.5] },
-      },
-      'lines',
-    );
-    ctx.addLayer(
-      {
-        id: 'convergences-point',
-        type: 'circle',
-        source: 'convergences',
-        filter: ['==', ['geometry-type'], 'Point'],
-        paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 6, 12, 16],
-          'circle-color': 'rgba(232,121,249,0.3)',
-          'circle-stroke-color': '#f5d0fe',
-          'circle-stroke-width': 2,
-          'circle-pitch-alignment': 'map',
-        },
+        paint: { 'line-color': '#000', 'line-opacity': 0.001, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 10, 12, 30] },
       },
       'lines',
     );
@@ -212,10 +203,12 @@ export class KnowledgeModule implements MapModule {
         'points',
       );
     // Hundreds of items: they appear as one zooms in, so the overview stays readable.
-    const officialIcon = (kind: string) => ['case', ['to-boolean', ['get', 'official']], kind, `${kind}-community`] as ExpressionSpecification;
+    const officialIcon = (kind: string) => ['match', ['get', 'status'], 'official', kind, 'forbidden', `${kind}-forbidden`, `${kind}-community`] as ExpressionSpecification;
     point('landings', officialIcon('landing'), 10);
-    point('soaring', 'soaring', 9.5);
-    point('thermals', 'thermal', 9);
+    // Soaring: the icon only, the name on hover.
+    point('soaring', 'soaring', 9.5, { 'text-field': '' });
+    // Thermals: the icon only, the name on hover.
+    point('thermals', 'thermal', 9, { 'text-field': '' });
     // Hotspots known only from GPS tracks (kk7): smaller, unlabelled, from closer in.
     ctx.map.setFilter('thermals', ['all', ['!=', ['get', 'origin'], 'kk7'], shownHere]);
     ctx.addLayer(
@@ -234,35 +227,6 @@ export class KnowledgeModule implements MapModule {
     // Hazards: the icon only, the name on hover.
     point('hazards', 'hazard', 10, { 'text-field': '' });
 
-    ctx.addLayer(
-      {
-        id: 'breezes-label',
-        type: 'symbol',
-        source: 'breezes',
-        minzoom: 10,
-        layout: {
-          'symbol-placement': 'line-center',
-          'text-field': ['concat', ['get', 'label'], '  ', ['to-string', ['get', 'speedKmh']], ' km/h'],
-          'text-font': ['Noto Sans Bold'],
-          'text-size': 11,
-          'text-offset': [0, -1.1],
-          'text-max-angle': 30,
-        },
-        paint: { 'text-color': '#e0f2fe', 'text-halo-color': 'rgba(8,47,73,0.9)', 'text-halo-width': 1.4, 'text-opacity': active },
-      },
-      'labels',
-    );
-    ctx.addLayer(
-      {
-        id: 'routes-label',
-        type: 'symbol',
-        source: 'routes',
-        minzoom: 9,
-        layout: { 'symbol-placement': 'line-center', 'text-field': ['get', 'label'], 'text-font': ['Noto Sans Italic'], 'text-size': 11, 'text-offset': [0, -1] },
-        paint: { 'text-color': '#fef3c7', 'text-halo-color': 'rgba(30,20,0,0.85)', 'text-halo-width': 1.3 },
-      },
-      'labels',
-    );
     ctx.addLayer(
       {
         id: 'massif-labels',
@@ -299,17 +263,22 @@ export class KnowledgeModule implements MapModule {
     const map = this.ctx?.map;
     if (!map) return;
     const spots: Spot[] = [];
+    const dups = hazardDuplicates(this.ctx!.atlas);
     for (const [cat, features] of this.points) {
       if (!layers[cat]) continue;
       for (const f of features) {
         const p = f.properties as AtlasFeature['properties'];
-        if (f.geometry.type !== 'Point') continue;
+        if (f.geometry.type !== 'Point' || dups.has(p.id) || (cat === 'soaring' && !isSoaring(f as AtlasFeature))) continue;
         const [lon, lat] = f.geometry.coordinates;
         spots.push({ ref: `atlas:${p.id}`, kind: cat === 'thermals' && p.origin === 'kk7' ? 'measured' : cat, lon, lat, name: p.name });
       }
     }
     if (layers.sitesOfficial)
-      for (const s of this.officials) spots.push({ ref: `sites:ffvl:${s.id}`, kind: s.kind === 'landing' ? 'ffvl-landing' : 'ffvl-takeoff', lon: s.lon, lat: s.lat, name: s.name });
+      for (const s of this.officials) {
+        const official = ffvlStatus(s) === 'official';
+        const kind: SpotKind = s.kind === 'landing' ? (official ? 'ffvl-landing' : 'landings') : official ? 'ffvl-takeoff' : 'takeoffs';
+        spots.push({ ref: `sites:ffvl:${s.id}`, kind, lon: s.lon, lat: s.lat, name: s.name });
+      }
     const r = resolveSpots(spots);
     setLiveSpots(r, spots);
     for (const [cat, features] of this.points) {
@@ -317,28 +286,95 @@ export class KnowledgeModule implements MapModule {
         const p = f.properties as AtlasFeature['properties'];
         const ref = `atlas:${p.id}`;
         const [lon, lat] = f.geometry.type === 'Point' ? f.geometry.coordinates : [0, 0];
-        const official = (cat === 'takeoffs' || cat === 'landings') && officialAt(this.officials, cat === 'takeoffs' ? 'takeoff' : 'landing', lon, lat);
-        return { ...f, properties: { ...f.properties, hidden: r.hidden.has(ref), also: alsoText(r.also.get(ref)), official } };
+        const ffvl = cat === 'takeoffs' || cat === 'landings' ? ffvlSiteAt(this.officials, cat === 'takeoffs' ? 'takeoff' : 'landing', lon, lat) : null;
+        const status = ffvl ? ffvlStatus(ffvl) : null;
+        return { ...f, properties: { ...f.properties, ...(status === 'forbidden' ? { note: banNote(ffvl!) } : {}), hidden: r.hidden.has(ref) || dups.has(p.id) || (cat === 'soaring' && !isSoaring(f as AtlasFeature)), status: status ?? 'unofficial' } };
       });
       (map.getSource(cat) as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: data });
     }
   }
 
-  /** Breezes fade in and out with the hour, following their documented window. */
-  private updateActivity(hour: number): void {
+  /** The live breezes (one arrow per valley) and their heads; numeric ids for the hourly fade. */
+  private breezes: SchemaBreeze[] = [];
+  private hour = 15;
+
+  private setBreezes(): void {
     const { map, atlas } = this.ctx!;
-    for (const f of atlas.features.breezes) {
-      const p = f.properties;
-      const w: [number, number] = p.windowStart !== undefined && p.windowEnd !== undefined ? [p.windowStart, p.windowEnd] : [11, 19];
-      map.setFeatureState({ source: 'breezes', id: f.id! }, { active: 0.12 + 0.88 * windowActivity(hour, w) });
-    }
+    this.breezes = liveBreezes(atlas);
+    const lines = this.breezes.map((b, i) => ({ type: 'Feature' as const, id: i, geometry: b.geometry, properties: { ...b.properties, category: 'breezes', label: shortLabel(b.properties.name) } }));
+    const heads = this.breezes.map((b, i) => {
+      const cs = b.geometry.coordinates;
+      return { type: 'Feature' as const, id: i, geometry: { type: 'Point' as const, coordinates: cs[cs.length - 1] }, properties: { kind: b.properties.kind, confidence: b.properties.confidence, rotate: endBearing(cs) - 90 } };
+    });
+    (map.getSource('breezes') as GeoJSONSource).setData({ type: 'FeatureCollection', features: lines });
+    (map.getSource('breeze-heads') as GeoJSONSource).setData({ type: 'FeatureCollection', features: heads });
+    this.updateActivity(this.hour);
+  }
+
+  /** Breezes fade in and out with the hour; a line repeating another one at that hour stays hidden. */
+  private updateActivity(hour: number): void {
+    this.hour = hour;
+    const { map, atlas } = this.ctx!;
+    // Same selection as the massif pages (one arrow per valley), every quarter of an hour.
+    const q = Math.round(hour * 4) / 4;
+    const shown = new Set(distinctAt(atlas, (p) => blowingNow(p, q), q, `now:${q}`).map((b) => b.properties.id));
+    this.breezes.forEach((b, i) => {
+      if (!shown.has(b.properties.id)) {
+        map.setFeatureState({ source: 'breezes', id: i }, { active: 0 });
+        map.setFeatureState({ source: 'breeze-heads', id: i }, { active: 0 });
+        return;
+      }
+      const p = b.properties;
+      const w: [number, number] = p.windowStart != null && p.windowEnd != null ? [p.windowStart, p.windowEnd] : [11, 19];
+      // Off-hours breezes almost vanish: only what blows now reads on the map.
+      const active = 0.05 + 0.95 * windowActivity(hour, w);
+      map.setFeatureState({ source: 'breezes', id: i }, { active });
+      map.setFeatureState({ source: 'breeze-heads', id: i }, { active });
+    });
+  }
+
+  /** A conventionné FFVL take-off or landing opens its FFVL page (the sheet shows too). */
+  select(id: string): boolean {
+    const f = this.index.get(id);
+    const cat = f?.properties.category;
+    if (!f || (cat !== 'takeoffs' && cat !== 'landings') || f.geometry.type !== 'Point') return false;
+    const [lon, lat] = f.geometry.coordinates;
+    const site = ffvlSiteAt(this.officials, cat === 'takeoffs' ? 'takeoff' : 'landing', lon, lat);
+    if (site?.url && ffvlStatus(site) === 'official') window.open(site.url, '_blank', 'noopener');
+    return false;
+  }
+
+  /** A skyway's sheet: how many documented routes fly it, each one a link. */
+  private describeSkyway(id: string): FeatureDetails | null {
+    const s = skywayById(id);
+    if (!s) return null;
+    const ids = s.properties.routes.split(',');
+    const routes = ids.map((r) => this.index.get(r)).filter((f): f is AtlasFeature => !!f);
+    const cs = s.geometry.coordinates;
+    return {
+      ref: `atlas:${id}`,
+      category: 'Skyway',
+      title: s.properties.name,
+      stat: `${s.properties.count} itinéraires documentés passent par ici`,
+      paragraphs: [
+        'Couloir de cross emprunté par plusieurs itinéraires documentés : leurs balises à moins de 3 km les unes des autres sont regroupées, et un tronçon devient un skyway quand au moins deux itinéraires le volent. Le tracé relie ces balises, ce n’est pas une trace GPS.',
+      ],
+      related: routes.map((r) => ({ ref: `atlas:${r.properties.id}`, title: r.properties.name, kind: r.properties.details?.Distance ?? 'itinéraire' })),
+      bbox: bboxOf(cs),
+    };
   }
 
   get(id: string): AtlasFeature | undefined {
     return this.index.get(id);
   }
 
-  describe(id: string): FeatureDetails | null {
+  describe(id: string, given: Record<string, unknown> = {}): FeatureDetails | null {
+    if (id.startsWith('skyway:')) return this.describeSkyway(id);
+    // A map arrow: the atlas breeze it draws, or its own sheet.
+    if (id.startsWith('carte:')) {
+      const atlasId = given.atlasId ?? schemaBreezeById(id)?.properties.atlasId;
+      return atlasId ? this.describe(String(atlasId)) : mapBreezeDetails(id);
+    }
     const f = this.index.get(id);
     if (!f) return null;
     const p = f.properties;
@@ -358,7 +394,22 @@ export class KnowledgeModule implements MapModule {
       details: p.details ? Object.entries(p.details) : undefined,
       paragraphs: p.description ? p.description.split('\n\n') : undefined,
       sourceIds: p.sources.split(',').filter(Boolean),
-      related: relatedOf(`atlas:${id}`),
+      related: nonEmpty([
+        ...hazardAccounts(this.ctx!.atlas, id).map((h) => ({ ref: `atlas:${h.properties.id}`, title: h.properties.name, kind: 'même piège, autre source' })),
+        ...(relatedOf(`atlas:${id}`) ?? []),
+      ]),
+      ...(p.category === 'takeoffs' || p.category === 'landings'
+        ? (() => {
+            const [lon, lat] = f.geometry.type === 'Point' ? f.geometry.coordinates : [0, 0];
+            const site = ffvlSiteAt(this.officials, p.category === 'takeoffs' ? 'takeoff' : 'landing', lon, lat);
+            const status = site ? ffvlStatus(site) : null;
+            return {
+              badges: [{ label: status ? FFVL_STATUS_LABEL[status] : 'Hors liste FFVL', tone: status === 'official' ? 'ok' : status === 'forbidden' ? 'bad' : 'warn' } as const, ...badges],
+              ...(status === 'forbidden' ? { warning: `Pratique interdite selon la FFVL : ${banReason(site!)}` } : {}),
+              ...(site?.url ? { links: [{ label: 'Fiche du site sur le site de la FFVL', url: site.url }] } : {}),
+            };
+          })()
+        : {}),
       warning: p.coordQuality && p.coordQuality !== 'source' ? 'Position estimée à partir de descriptions : à vérifier sur la fiche FFVL avant usage.' : undefined,
       bbox: bboxOf(coords),
       massifId: p.massif,
